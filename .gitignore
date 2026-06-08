@@ -31,7 +31,15 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
+
+# temporary scripts & logs
+metro.log
+fix_*.js
+replace_*.py
+test_*.js
+test_*.ts
 
 # typescript
 *.tsbuildinfo
