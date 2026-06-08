@@ -18,6 +18,7 @@ import IngredientEditor from "./src/components/IngredientEditor";
 import Toast from 'react-native-toast-message';
 import { t } from './src/utils/i18n';
 import { formatCurrency, CURRENCIES } from './src/utils/currency';
+import { checkForUpdates } from "./src/utils/updateChecker";
 
 function MainApp() {
   const {
@@ -1466,6 +1467,12 @@ function MainApp() {
 
 export default function App() {
   const themeColor = usePosStore(s => s.themeColor);
+
+  useEffect(() => {
+    checkForUpdates().catch(err => {
+      console.error("[UpdateChecker] Error in checkForUpdates on mount:", err);
+    });
+  }, []);
 
   return (
     <View style={{ flex: 1 }} className={themeColor === 'rose' ? 'theme-rose' : themeColor === 'amber' ? 'theme-amber' : themeColor === 'indigo' ? 'theme-indigo' : ''}>
