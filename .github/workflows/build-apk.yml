@@ -1,0 +1,68 @@
+name: Build & Release Android APK
+
+# Triggers when you push a version tag like v1.0.0, v1.1.0, etc.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build APK & Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout the code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Set up Node.js
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      # 3. Set up Java (required for Android/Gradle builds)
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # 4. Install EAS CLI
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
+
+      # 5. Install project dependencies
+      - name: Install dependencies
+        run: npm ci
+
+      # 6. Build APK using EAS (local build on the runner)
+      - name: Build APK
+        run: eas build --platform android --profile preview --local --non-interactive --output ./pos-app.apk
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      # 7. Create GitHub Release and upload APK
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }} - Restaurant POS
+          body: |
+            ## Restaurant POS App ${{ github.ref_name }}
+
+            ### Installation
+            1. Download `pos-app.apk` below
+            2. Transfer it to your Android device
+            3. Enable "Install from unknown sources" in Settings
+            4. Open the APK to install
+
+            ### Changes
+            See [commit history](https://github.com/${{ github.repository }}/commits/${{ github.ref_name }}) for details.
+          files: ./pos-app.apk
+          draft: false
+          prerelease: false
