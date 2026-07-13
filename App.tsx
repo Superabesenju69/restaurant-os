@@ -1,7 +1,7 @@
 import "./global.css";
 import React, { useEffect, useState } from "react";
 import { StatusBar } from 'expo-status-bar';
-import { View, Text, TouchableOpacity, ScrollView, TextInput, KeyboardAvoidingView, Platform, SafeAreaView, ActivityIndicator, Image, FlatList, Alert } from "react-native";
+import { View, Text, TouchableOpacity, ScrollView, TextInput, KeyboardAvoidingView, Platform, SafeAreaView, ActivityIndicator, Image, FlatList, Alert, useWindowDimensions } from "react-native";
 import type { GestureResponderEvent } from "react-native";
 import type { MenuItem, ItemOption, ItemOptionChoice, Recipe, CartItem, CartItemIngredient, Payment, Category, FloorTable } from "./src/types";
 import { usePosStore } from "./src/store/posStore";
@@ -32,7 +32,9 @@ function MainApp() {
     currentPosUser, posLogin, themeColor,
     localReceiptPrinterId,
     availablePromotions, appliedGlobalPromotionIds, applyManualPromotion, removeManualPromotion, recalculateCartMath,
-    language, currency
+    language, currency,
+    activeCashShift, showCashRegisterModal, setShowCashRegisterModal,
+    openCashShift, closeCashShift, addCashAdjustment, usdExchangeRate
   } = usePosStore();
 
   const themeBgs: Record<string, string> = {
@@ -50,6 +52,10 @@ function MainApp() {
   const bgStr = themeBgs[themeColor] || themeBgs.teal;
   const tp = themePalette[themeColor] || themePalette.teal;
 
+  const { width } = useWindowDimensions();
+  const isMobile = width < 768;
+  const [isFooterExpanded, setIsFooterExpanded] = useState(false);
+
   const [qtyPickerItem, setQtyPickerItem] = useState<any | null>(null);
   const [qtyPickerCount, setQtyPickerCount] = useState(1);
   const [qtyPickerOptions, setQtyPickerOptions] = useState<Record<string, string>>({});
@@ -66,10 +72,37 @@ function MainApp() {
   const [cashTenderAmount, setCashTenderAmount] = useState('');
   const [processingCard, setProcessingCard] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [payInUsd, setPayInUsd] = useState(false);
+  const [usdAmountInput, setUsdAmountInput] = useState('');
 
   // Receipt State
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [lastCompletedOrder, setLastCompletedOrder] = useState<any>(null);
+
+  // Cash Drawer Register Local State
+  const [startingCashInput, setStartingCashInput] = useState('');
+  const [actualCashInput, setActualCashInput] = useState('');
+  const [adjustmentAmountInput, setAdjustmentAmountInput] = useState('');
+  const [adjustmentReasonInput, setAdjustmentReasonInput] = useState('');
+  const [adjustmentType, setAdjustmentType] = useState<'cash_in' | 'cash_out' | null>(null);
+  const [shiftSummary, setShiftSummary] = useState<{ cashSales: number; adjustmentsIn: number; adjustmentsOut: number } | null>(null);
+  const [shiftNotesInput, setShiftNotesInput] = useState('');
+  const [isLoadingShiftSummary, setIsLoadingShiftSummary] = useState(false);
+
+  useEffect(() => {
+    if (showCashRegisterModal && activeCashShift) {
+      setIsLoadingShiftSummary(true);
+      usePosStore.getState().fetchCashShiftSummary(activeCashShift.id)
+        .then(summary => {
+          setShiftSummary(summary);
+          setIsLoadingShiftSummary(false);
+        })
+        .catch(err => {
+          console.error(err);
+          setIsLoadingShiftSummary(false);
+        });
+    }
+  }, [showCashRegisterModal, activeCashShift]);
 
 
   const { tenantId, setTenant, clearTenant } = usePosStore();
@@ -259,34 +292,34 @@ function MainApp() {
       <SafeAreaView className="flex-1" style={{ backgroundColor: bgStr }}>
         <StatusBar style="dark" />
 
-        <View className="flex-1 flex-row">
+        <View className="flex-1 flex-col md:flex-row">
           {/* Left Panel: Cart & Checkout (35%) */}
-          <View className="w-[35%] bg-white border-r border-gray-200 shadow-sm z-10 flex-col">
-            <View className="p-6 border-b border-gray-100 flex-col justify-between bg-white z-20 shadow-sm relative">
+          <View className="w-full md:w-[35%] h-[48%] md:h-full bg-white border-b md:border-b-0 md:border-r border-gray-200 shadow-sm z-10 flex-col">
+            <View className="p-3 md:p-6 border-b border-gray-100 flex-col justify-between bg-white z-20 shadow-sm relative">
               <View className="flex-row items-center justify-between w-full">
                 <View>
-                  <Text className="text-3xl font-black text-gray-900 tracking-tight">{t('pos.lbl.order_prefix', language)} #{activeOrderNumber}</Text>
-                  <Text className="text-sm font-semibold mt-1 uppercase tracking-wider" style={{ color: tp[600] }}>
+                  <Text className="text-xl md:text-3xl font-black text-gray-900 tracking-tight">{t('pos.lbl.order_prefix', language)} #{activeOrderNumber}</Text>
+                  <Text className="text-xs md:text-sm font-semibold mt-1 uppercase tracking-wider" style={{ color: tp[600] }}>
                     {activeOrderCustomer ? `👤 ${activeOrderCustomer} — ` : ''}
                     {activeOrderType === 'dine_in' && activeOrderTable
                       ? `🍽 ${t('pos.orders.dine_in', language)} (${activeOrderTable.name})`
                       : `🛍 ${t('pos.orders.take_out', language)}`}
                   </Text>
                 </View>
-                <TouchableOpacity onPress={() => setScreen('home')} className="bg-gray-50 p-3 rounded-2xl border border-gray-200 shadow-sm">
-                  <Text className="font-bold text-gray-700">{t('pos.main.home', language)}</Text>
+                <TouchableOpacity onPress={() => setScreen('home')} className="bg-gray-50 p-2 md:p-3 rounded-xl md:rounded-2xl border border-gray-200 shadow-sm">
+                  <Text className="font-bold text-xs md:text-base text-gray-700">{t('pos.main.home', language)}</Text>
                 </TouchableOpacity>
               </View>
             </View>
 
             <FlatList
-              className="flex-1 p-4"
+              className="flex-1 p-3 md:p-4"
               data={cart}
               keyExtractor={item => item.cart_id}
               ListEmptyComponent={
-                <View className="flex-1 items-center justify-center py-20">
-                  <Text className="text-gray-400 font-medium text-lg">{t('pos.msg.empty_cart', language)}</Text>
-                  <Text className="text-gray-400 text-sm mt-2 text-center px-4">{t('pos.main.empty_cart_hint', language)}</Text>
+                <View className="flex-1 items-center justify-center py-6 md:py-20">
+                  <Text className="text-gray-400 font-medium text-base md:text-lg">{t('pos.msg.empty_cart', language)}</Text>
+                  <Text className="text-gray-400 text-xs md:text-sm mt-1 md:mt-2 text-center px-4">{t('pos.main.empty_cart_hint', language)}</Text>
                 </View>
               }
               renderItem={({ item: cartItem }: { item: CartItem }) => (
@@ -305,96 +338,197 @@ function MainApp() {
               )}
             />
 
-            <View className="p-6 border-t border-gray-100 bg-gray-50">
-              <View className="flex-row justify-between mb-1">
-                <Text className="text-gray-500 font-medium">{t('pos.lbl.subtotal', language)}</Text>
-                <Text className="text-gray-900 font-bold">{formatCurrency(cartTotals.subtotalBruto, currency)}</Text>
-              </View>
-
-              {cartTotals.totalDescuentos > 0 && (
-                <View className="flex-row justify-between mb-1">
-                  <Text className="text-red-500 font-medium">{t('pos.lbl.discount', language)}</Text>
-                  <Text className="text-red-500 font-bold">-{formatCurrency(cartTotals.totalDescuentos, currency)}</Text>
-                </View>
-              )}
-
-              {cartTotals.totalDescuentos > 0 && (
-                <View className="flex-row justify-between mb-2 pb-2 border-b border-gray-200">
-                  <Text className="text-gray-500 font-medium tracking-wide text-xs">{t('pos.main.base_imponible', language)}</Text>
-                  <Text className="text-gray-700 font-semibold text-xs">{formatCurrency(cartTotals.baseImponibleIva, currency)}</Text>
-                </View>
-              )}
-
-              <View className="flex-row justify-between mb-2">
-                <Text className="text-gray-500 font-medium">{t('pos.lbl.tax', language)}</Text>
-                <Text className="text-gray-900 font-bold">{formatCurrency(cartTotals.montoIva, currency)}</Text>
-              </View>
-
-              <View className="flex-row justify-between items-center bg-gray-200/50 p-4 rounded-xl mb-4 mt-2">
-                <Text className="text-lg font-bold text-gray-900">{t('pos.lbl.total', language)}</Text>
-                <Text className="text-3xl font-black text-gray-900">{formatCurrency(cartTotal, currency)}</Text>
-              </View>
-
-              {/* Send to Kitchen / Checkout buttons */}
-              <View className="flex-col gap-3">
-                {/* Send to Kitchen button — show if any item has unsent delta */}
-                {cart.some((c: CartItem) => (c.sentQuantity ?? 0) < c.quantity) ? (
-                  <TouchableOpacity
-                    onPress={async () => {
-                      await sendToKitchen();
-                      Alert.alert(t('pos.main.kitchen_notified', language), t('pos.main.kitchen_notified_desc', language));
-                    }}
-                    disabled={cart.length === 0}
-                    className="bg-amber-400 px-6 py-3 rounded-xl items-center justify-center flex-row gap-2 shadow-sm"
+            <View className="p-3 md:p-6 border-t border-gray-100 bg-gray-50">
+              {/* MOBILE COLLAPSIBLE TOGGLE ROW */}
+              {isMobile && (
+                <View className="flex-row justify-between items-center mb-2 pb-2 border-b border-gray-200/60">
+                  <TouchableOpacity 
+                    onPress={() => setIsFooterExpanded(!isFooterExpanded)} 
+                    className="flex-row items-center gap-1.5 py-1 px-2.5 bg-gray-200/60 rounded-lg"
                   >
-                    <Text className="text-white font-bold text-base">{t('pos.main.send_kitchen', language)}</Text>
+                    <Text className="text-gray-700 font-bold text-xs uppercase tracking-wider">
+                      {isFooterExpanded ? '👇 Ocultar' : '👆 Detalles'}
+                    </Text>
                   </TouchableOpacity>
-                ) : cart.length > 0 ? (
-                  <View className="bg-amber-50 border border-amber-200 px-4 py-2.5 rounded-xl items-center">
-                    <Text className="text-amber-700 font-semibold text-sm">{t('pos.main.all_sent', language)}</Text>
+                  {cartTotals.totalDescuentos > 0 && !isFooterExpanded && (
+                    <Text className="text-red-500 font-bold text-xs">
+                      Descuento: -{formatCurrency(cartTotals.totalDescuentos, currency)}
+                    </Text>
+                  )}
+                </View>
+              )}
+
+              {/* DETAILS BLOCK (Shown permanently on tablet, or on mobile when expanded) */}
+              {(!isMobile || isFooterExpanded) && (
+                <View className="mb-2">
+                  <View className="flex flex-row justify-between mb-1">
+                    <Text className="text-gray-500 font-medium text-xs md:text-sm">{t('pos.lbl.subtotal', language)}</Text>
+                    <Text className="text-gray-900 font-bold text-xs md:text-sm">{formatCurrency(cartTotals.subtotalBruto, currency)}</Text>
                   </View>
-                ) : null}
 
-                <View className="flex-row gap-3">
-                  <TouchableOpacity
-                    onPress={() => setShowPromosModal(true)}
-                    disabled={cart.length === 0}
-                    className="bg-indigo-50 px-4 py-4 rounded-xl items-center justify-center border border-indigo-200"
-                    style={cart.length === 0 ? { opacity: 0.5 } : {}}
-                  >
-                    <Text className="text-indigo-700 font-bold text-lg">🏷️ {t('pos.tab.promos', language)}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={clearCart}
-                    className="bg-red-50 px-4 py-4 rounded-xl items-center justify-center border border-red-100"
-                  >
-                    <Text className="text-red-600 font-bold text-lg">{t('pos.lbl.clear', language)}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={async () => {
-                      if (cart.length === 0) return;
-                      if (currentPosUser?.role === 'mesero') {
-                        Alert.alert(
-                          language === 'es' ? 'Acceso Denegado' : 'Access Denied',
-                          language === 'es'
-                            ? 'Su rol de Mesero no le permite realizar cobros. Solicite ayuda a un Cajero o Administrador.'
-                            : 'Your server role does not permit processing payments. Please contact a Cashier or Admin.'
-                        );
-                        return;
-                      }
-                      // Open checkout modal instead of directly triggering checkout
-                      setShowCheckoutModal(true);
-                      setCurrentPayments([]);
-                      setCashTenderAmount('');
-                    }}
-                    className={`flex-1 px-6 py-4 rounded-xl items-center justify-center shadow-sm ${cart.length === 0 ? 'bg-gray-300' : ''}`}
-                    style={cart.length > 0 ? { backgroundColor: tp[600] } : undefined}
-                    disabled={cart.length === 0 || isLoading}
-                  >
-                    <Text className="text-white font-bold text-xl">{isLoading ? t('pos.main.processing', language) : t('pos.tab.checkout', language)}</Text>
-                  </TouchableOpacity>
+                  {cartTotals.totalDescuentos > 0 && (
+                    <View className="flex flex-row justify-between mb-1">
+                      <Text className="text-red-500 font-medium text-xs md:text-sm">{t('pos.lbl.discount', language)}</Text>
+                      <Text className="text-red-500 font-bold text-xs md:text-sm">-{formatCurrency(cartTotals.totalDescuentos, currency)}</Text>
+                    </View>
+                  )}
+
+                  {cartTotals.totalDescuentos > 0 && (
+                    <View className="flex flex-row justify-between mb-2 pb-2 border-b border-gray-200">
+                      <Text className="text-gray-500 font-medium tracking-wide text-[10px] md:text-xs">{t('pos.main.base_imponible', language)}</Text>
+                      <Text className="text-gray-700 font-semibold text-[10px] md:text-xs">{formatCurrency(cartTotals.baseImponibleIva, currency)}</Text>
+                    </View>
+                  )}
+
+                  <View className="flex flex-row justify-between mb-2">
+                    <Text className="text-gray-500 font-medium text-xs md:text-sm">{t('pos.lbl.tax', language)}</Text>
+                    <Text className="text-gray-900 font-bold text-xs md:text-sm">{formatCurrency(cartTotals.montoIva, currency)}</Text>
+                  </View>
                 </View>
-              </View>
+              )}
+
+              {/* TOTAL ROW & EXPANDED ACTIONS CONTAINER */}
+              {(!isMobile || isFooterExpanded) ? (
+                <>
+                  <View className="flex-row justify-between items-center bg-gray-200/50 p-2.5 md:p-4 rounded-xl mb-3 md:mb-4 mt-1 md:mt-2">
+                    <Text className="text-base md:text-lg font-bold text-gray-900">{t('pos.lbl.total', language)}</Text>
+                    <Text className="text-2xl md:text-3xl font-black text-gray-900">{formatCurrency(cartTotal, currency)}</Text>
+                  </View>
+
+                  {/* Send to Kitchen / Checkout buttons */}
+                  <View className="flex-col gap-2 md:gap-3">
+                    {/* Send to Kitchen button — show if any item has unsent delta */}
+                    {cart.some((c: CartItem) => (c.sentQuantity ?? 0) < c.quantity) ? (
+                      <TouchableOpacity
+                        onPress={async () => {
+                          await sendToKitchen();
+                          Alert.alert(t('pos.main.kitchen_notified', language), t('pos.main.kitchen_notified_desc', language));
+                        }}
+                        disabled={cart.length === 0}
+                        className="bg-amber-400 px-4 md:px-6 py-2 md:py-3 rounded-xl items-center justify-center flex-row gap-2 shadow-sm"
+                      >
+                        <Text className="text-white font-bold text-sm md:text-base">{t('pos.main.send_kitchen', language)}</Text>
+                      </TouchableOpacity>
+                    ) : cart.length > 0 ? (
+                      <View className="bg-amber-50 border border-amber-200 px-4 py-2 rounded-xl items-center">
+                        <Text className="text-amber-700 font-semibold text-xs md:text-sm">{t('pos.main.all_sent', language)}</Text>
+                      </View>
+                    ) : null}
+
+                    <View className="flex-row gap-2 md:gap-3">
+                      <TouchableOpacity
+                        onPress={() => setShowPromosModal(true)}
+                        disabled={cart.length === 0}
+                        className="bg-indigo-50 px-3 md:px-4 py-2.5 md:py-4 rounded-xl items-center justify-center border border-indigo-200"
+                        style={cart.length === 0 ? { opacity: 0.5 } : {}}
+                      >
+                        <Text className="text-indigo-700 font-bold text-sm md:text-lg">🏷️ {t('pos.tab.promos', language)}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={clearCart}
+                        className="bg-red-50 px-3 md:px-4 py-2.5 md:py-4 rounded-xl items-center justify-center border border-red-100"
+                      >
+                        <Text className="text-red-600 font-bold text-sm md:text-lg">{t('pos.lbl.clear', language)}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={async () => {
+                          if (cart.length === 0) return;
+                          if (currentPosUser?.role === 'mesero') {
+                            Alert.alert(
+                              language === 'es' ? 'Acceso Denegado' : 'Access Denied',
+                              language === 'es'
+                                ? 'Su rol de Mesero no le permite realizar cobros. Solicite ayuda a un Cajero o Administrador.'
+                                : 'Your server role does not permit processing payments. Please contact a Cashier or Admin.'
+                            );
+                            return;
+                          }
+                          if (!activeCashShift) {
+                            Alert.alert(
+                              language === 'es' ? 'Caja Cerrada' : 'Register Closed',
+                              language === 'es'
+                                ? 'Debe abrir una caja antes de poder realizar cobros.'
+                                : 'You must open a cash drawer shift before processing checkouts.',
+                              [
+                                { text: language === 'es' ? 'Abrir Caja' : 'Open Register', onPress: () => { setScreen('home'); setShowCashRegisterModal(true); } },
+                                { text: language === 'es' ? 'Cancelar' : 'Cancel', style: 'cancel' }
+                              ]
+                            );
+                            return;
+                          }
+                          setShowCheckoutModal(true);
+                          setCurrentPayments([]);
+                          setCashTenderAmount('');
+                        }}
+                        className={`flex-1 px-4 md:px-6 py-2.5 md:py-4 rounded-xl items-center justify-center shadow-sm ${cart.length === 0 ? 'bg-gray-300' : ''}`}
+                        style={cart.length > 0 ? { backgroundColor: tp[600] } : undefined}
+                        disabled={cart.length === 0 || isLoading}
+                      >
+                        <Text className="text-white font-bold text-lg md:text-xl">{isLoading ? t('pos.main.processing', language) : t('pos.tab.checkout', language)}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </>
+              ) : (
+                /* COLLAPSED QUICK-ACTIONS ROW FOR MOBILE */
+                <View className="flex-row justify-between items-center py-1">
+                  <View className="flex-col">
+                    <Text className="text-gray-500 font-semibold text-[10px] uppercase tracking-wider">{t('pos.lbl.total', language)}</Text>
+                    <Text className="text-2xl font-black text-gray-900">{formatCurrency(cartTotal, currency)}</Text>
+                  </View>
+                  
+                  <View className="flex-row gap-2 flex-1 justify-end ml-4">
+                    {/* If any item needs to be sent to kitchen, show quick send button */}
+                    {cart.some((c: CartItem) => (c.sentQuantity ?? 0) < c.quantity) && (
+                      <TouchableOpacity
+                        onPress={async () => {
+                          await sendToKitchen();
+                          Alert.alert(t('pos.main.kitchen_notified', language), t('pos.main.kitchen_notified_desc', language));
+                        }}
+                        disabled={cart.length === 0}
+                        className="bg-amber-400 px-4 py-2.5 rounded-xl items-center justify-center shadow-sm"
+                      >
+                        <Text className="text-white font-bold text-sm">🔥 Enviar</Text>
+                      </TouchableOpacity>
+                    )}
+                    
+                    <TouchableOpacity
+                      onPress={async () => {
+                        if (cart.length === 0) return;
+                        if (currentPosUser?.role === 'mesero') {
+                          Alert.alert(
+                            language === 'es' ? 'Acceso Denegado' : 'Access Denied',
+                            language === 'es'
+                              ? 'Su rol de Mesero no le permite realizar cobros. Solicite ayuda a un Cajero o Administrador.'
+                              : 'Your server role does not permit processing payments. Please contact a Cashier or Admin.'
+                          );
+                          return;
+                        }
+                        if (!activeCashShift) {
+                          Alert.alert(
+                            language === 'es' ? 'Caja Cerrada' : 'Register Closed',
+                            language === 'es'
+                              ? 'Debe abrir una caja antes de poder realizar cobros.'
+                              : 'You must open a cash drawer shift before processing checkouts.',
+                            [
+                              { text: language === 'es' ? 'Abrir Caja' : 'Open Register', onPress: () => { setScreen('home'); setShowCashRegisterModal(true); } },
+                              { text: language === 'es' ? 'Cancelar' : 'Cancel', style: 'cancel' }
+                            ]
+                          );
+                          return;
+                        }
+                        setShowCheckoutModal(true);
+                        setCurrentPayments([]);
+                        setCashTenderAmount('');
+                      }}
+                      className={`px-6 py-2.5 rounded-xl items-center justify-center shadow-sm ${cart.length === 0 ? 'bg-gray-300' : ''}`}
+                      style={cart.length > 0 ? { backgroundColor: tp[600] } : undefined}
+                      disabled={cart.length === 0 || isLoading}
+                    >
+                      <Text className="text-white font-bold text-sm">{t('pos.tab.checkout', language)}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
             </View>
           </View>
 
@@ -1138,63 +1272,149 @@ function MainApp() {
                         <ScrollView showsVerticalScrollIndicator={false}>
                           <Text style={{ fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 16 }}>{t('pos.checkout.add_payment', language)}</Text>
 
-                          {/* Unified Amount Input */}
-                          <View style={{ backgroundColor: '#f9fafb', padding: 20, borderRadius: 20, borderWidth: 1, borderColor: '#e5e7eb', marginBottom: 16 }}>
-                            <Text style={{ fontWeight: '800', color: '#374151', marginBottom: 12 }}>{t('pos.checkout.amt_to_charge', language).replace(':', '')}</Text>
-                            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
-                              <View style={{ flex: 1, backgroundColor: 'white', borderRadius: 12, borderWidth: 1, borderColor: '#d1d5db', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 }}>
-                                <Text style={{ fontSize: 20, color: '#9ca3af', fontWeight: 'bold' }}>{CURRENCIES[currency]?.symbol || '$'}</Text>
-                                <TextInput
-                                  value={cashTenderAmount}
-                                  onChangeText={setCashTenderAmount}
-                                  keyboardType="decimal-pad"
-                                  placeholder={remaining.toFixed(2)}
-                                  placeholderTextColor="#9ca3af"
-                                  style={{ flex: 1, fontSize: 24, fontWeight: '800', paddingVertical: 12, marginLeft: 8 }}
-                                />
+                          {/* Currency Tab Selector */}
+                          <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
+                            <TouchableOpacity
+                              onPress={() => setPayInUsd(false)}
+                              style={{ flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: !payInUsd ? tp[100] : '#f3f4f6', alignItems: 'center', borderWidth: 1, borderColor: !payInUsd ? tp[400] : '#e5e7eb' }}
+                            >
+                              <Text style={{ fontWeight: 'bold', color: !payInUsd ? tp[700] : '#4b5563' }}>
+                                {language === 'es' ? `Pago en ${currency === 'USD' ? 'Dólares' : 'Córdobas'}` : `Pay in ${currency === 'USD' ? 'Dollars' : 'Cordobas'}`}
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => setPayInUsd(true)}
+                              style={{ flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: payInUsd ? '#e0f2fe' : '#f3f4f6', alignItems: 'center', borderWidth: 1, borderColor: payInUsd ? '#38bdf8' : '#e5e7eb' }}
+                            >
+                              <Text style={{ fontWeight: 'bold', color: payInUsd ? '#0369a1' : '#4b5563' }}>
+                                {language === 'es' ? 'Pago en Dólares (USD)' : 'Pay in Dollars (USD)'}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+
+                          {payInUsd ? (
+                            /* USD Cash Payment Input card */
+                            <View style={{ backgroundColor: '#f0f9ff', padding: 20, borderRadius: 20, borderWidth: 1, borderColor: '#bae6fd', marginBottom: 16 }}>
+                              <Text style={{ fontWeight: '800', color: '#0369a1', marginBottom: 12 }}>
+                                {language === 'es' ? 'Monto Recibido en USD ($)' : 'Received Amount in USD ($)'}
+                              </Text>
+                              
+                              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+                                <View style={{ flex: 1, backgroundColor: 'white', borderRadius: 12, borderWidth: 1, borderColor: '#bae6fd', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 }}>
+                                  <Text style={{ fontSize: 20, color: '#0284c7', fontWeight: 'bold' }}>$</Text>
+                                  <TextInput
+                                    value={usdAmountInput}
+                                    onChangeText={setUsdAmountInput}
+                                    keyboardType="decimal-pad"
+                                    placeholder={currency === 'USD' ? remaining.toFixed(2) : (remaining / usdExchangeRate).toFixed(2)}
+                                    placeholderTextColor="#9ca3af"
+                                    style={{ flex: 1, fontSize: 24, fontWeight: '800', paddingVertical: 12, marginLeft: 8, color: '#0f172a' }}
+                                  />
+                                </View>
                               </View>
-                            </View>
 
-                            {/* Quick Amount Buttons */}
-                            <Text style={{ fontSize: 13, fontWeight: '600', color: '#6b7280', marginBottom: 8, textTransform: 'uppercase' }}>{t('pos.checkout.quick_select', language)}</Text>
-                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                              <TouchableOpacity onPress={() => setCashTenderAmount(remaining.toFixed(2))} style={{ backgroundColor: 'white', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db' }}>
-                                <Text style={{ fontWeight: '700', color: '#374151' }}>{t('pos.checkout.exact', language)} {formatCurrency(remaining, currency)}</Text>
+                              {/* Conversion metrics */}
+                              <Text style={{ fontSize: 13, color: '#475569', fontWeight: '600', marginBottom: 4 }}>
+                                {language === 'es' ? `Tasa de Cambio: 1 USD = C$ ${usdExchangeRate.toFixed(2)}` : `Exchange Rate: 1 USD = C$ ${usdExchangeRate.toFixed(2)}`}
+                              </Text>
+                              {currency !== 'USD' && (
+                                <Text style={{ fontSize: 15, color: '#0369a1', fontWeight: '800' }}>
+                                  {language === 'es' ? 'Equivalente en Córdobas: ' : 'Equivalent in Cordobas: '}
+                                  C$ {(parseFloat(usdAmountInput || '0') * usdExchangeRate).toFixed(2)}
+                                </Text>
+                              )}
+
+                              <TouchableOpacity
+                                onPress={() => {
+                                  const usdVal = parseFloat(usdAmountInput || (currency === 'USD' ? remaining.toString() : (remaining / usdExchangeRate).toString()));
+                                  if (isNaN(usdVal) || usdVal <= 0) {
+                                    Alert.alert(language === 'es' ? 'Error' : 'Invalid Amount', language === 'es' ? 'Ingrese un monto válido.' : 'Please enter a valid amount.');
+                                    return;
+                                  }
+                                  
+                                  const baseAmt = currency === 'USD' ? usdVal : usdVal * usdExchangeRate;
+                                  handleAddPayment('cash', baseAmt);
+                                  
+                                  // Record reference string so it displays USD received on receipt
+                                  const refStr = `USD: $${usdVal.toFixed(2)} (@ ${usdExchangeRate.toFixed(2)})`;
+                                  setCurrentPayments(prev => {
+                                    const updated = [...prev];
+                                    if (updated.length > 0) {
+                                      updated[updated.length - 1].reference_id = refStr;
+                                    }
+                                    return updated;
+                                  });
+                                  setUsdAmountInput('');
+                                  setPayInUsd(false);
+                                }}
+                                style={{ backgroundColor: '#0284c7', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 16 }}
+                              >
+                                <Text style={{ color: 'white', fontWeight: '800', fontSize: 16 }}>
+                                  💵 {language === 'es' ? 'Confirmar Pago en USD' : 'Confirm USD Cash Payment'}
+                                </Text>
                               </TouchableOpacity>
-                              {[10, 20, 50, 100].filter(amt => amt >= remaining).slice(0, 3).map(amt => (
-                                <TouchableOpacity key={amt} onPress={() => setCashTenderAmount(amt.toString())} style={{ backgroundColor: 'white', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db' }}>
-                                  <Text style={{ fontWeight: '700', color: '#374151' }}>{formatCurrency(amt, currency)}</Text>
-                                </TouchableOpacity>
-                              ))}
                             </View>
-                          </View>
+                          ) : (
+                            /* Regular Unified Amount Input & Actions */
+                            <>
+                              <View style={{ backgroundColor: '#f9fafb', padding: 20, borderRadius: 20, borderWidth: 1, borderColor: '#e5e7eb', marginBottom: 16 }}>
+                                <Text style={{ fontWeight: '800', color: '#374151', marginBottom: 12 }}>{t('pos.checkout.amt_to_charge', language).replace(':', '')}</Text>
+                                <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
+                                  <View style={{ flex: 1, backgroundColor: 'white', borderRadius: 12, borderWidth: 1, borderColor: '#d1d5db', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 }}>
+                                    <Text style={{ fontSize: 20, color: '#9ca3af', fontWeight: 'bold' }}>{CURRENCIES[currency]?.symbol || '$'}</Text>
+                                    <TextInput
+                                      value={cashTenderAmount}
+                                      onChangeText={setCashTenderAmount}
+                                      keyboardType="decimal-pad"
+                                      placeholder={remaining.toFixed(2)}
+                                      placeholderTextColor="#9ca3af"
+                                      style={{ flex: 1, fontSize: 24, fontWeight: '800', paddingVertical: 12, marginLeft: 8 }}
+                                    />
+                                  </View>
+                                </View>
 
-                          {/* Payment Method Action Buttons */}
-                          <View style={{ flexDirection: 'row', gap: 12 }}>
-                            <TouchableOpacity
-                              onPress={() => handleAddPayment('cash', parseFloat(cashTenderAmount || remaining.toString()))}
-                              style={{ flex: 1, backgroundColor: 'white', padding: 16, borderRadius: 16, borderWidth: 2, borderColor: '#22c55e', alignItems: 'center' }}
-                            >
-                              <Text style={{ fontSize: 24, marginBottom: 8 }}>💵</Text>
-                              <Text style={{ fontWeight: '800', color: '#166534' }}>{t('pos.checkout.cash', language)}</Text>
-                            </TouchableOpacity>
+                                {/* Quick Amount Buttons */}
+                                <Text style={{ fontSize: 13, fontWeight: '600', color: '#6b7280', marginBottom: 8, textTransform: 'uppercase' }}>{t('pos.checkout.quick_select', language)}</Text>
+                                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                                  <TouchableOpacity onPress={() => setCashTenderAmount(remaining.toFixed(2))} style={{ backgroundColor: 'white', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db' }}>
+                                    <Text style={{ fontWeight: '700', color: '#374151' }}>{t('pos.checkout.exact', language)} {formatCurrency(remaining, currency)}</Text>
+                                  </TouchableOpacity>
+                                  {[10, 20, 50, 100].filter(amt => amt >= remaining).slice(0, 3).map(amt => (
+                                    <TouchableOpacity key={amt} onPress={() => setCashTenderAmount(amt.toString())} style={{ backgroundColor: 'white', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db' }}>
+                                      <Text style={{ fontWeight: '700', color: '#374151' }}>{formatCurrency(amt, currency)}</Text>
+                                    </TouchableOpacity>
+                                  ))}
+                                </View>
+                              </View>
 
-                            <TouchableOpacity
-                              onPress={() => handleAddPayment('credit_card', parseFloat(cashTenderAmount || remaining.toString()))}
-                              style={{ flex: 1, backgroundColor: 'white', padding: 16, borderRadius: 16, borderWidth: 2, borderColor: '#3b82f6', alignItems: 'center' }}
-                            >
-                              <Text style={{ fontSize: 24, marginBottom: 8 }}>💳</Text>
-                              <Text style={{ fontWeight: '800', color: '#1e40af' }}>{t('pos.checkout.card', language)}</Text>
-                            </TouchableOpacity>
+                              {/* Payment Method Action Buttons */}
+                              <View style={{ flexDirection: 'row', gap: 12 }}>
+                                <TouchableOpacity
+                                  onPress={() => handleAddPayment('cash', parseFloat(cashTenderAmount || remaining.toString()))}
+                                  style={{ flex: 1, backgroundColor: 'white', padding: 16, borderRadius: 16, borderWidth: 2, borderColor: '#22c55e', alignItems: 'center' }}
+                                >
+                                  <Text style={{ fontSize: 24, marginBottom: 8 }}>💵</Text>
+                                  <Text style={{ fontWeight: '800', color: '#166534' }}>{t('pos.checkout.cash', language)}</Text>
+                                </TouchableOpacity>
 
-                            <TouchableOpacity
-                              onPress={() => handleAddPayment('bank_deposit', parseFloat(cashTenderAmount || remaining.toString()))}
-                              style={{ flex: 1, backgroundColor: 'white', padding: 16, borderRadius: 16, borderWidth: 2, borderColor: '#8b5cf6', alignItems: 'center' }}
-                            >
-                              <Text style={{ fontSize: 24, marginBottom: 8 }}>🏦</Text>
-                              <Text style={{ fontWeight: '800', color: '#5b21b6' }}>{t('pos.checkout.bank', language)}</Text>
-                            </TouchableOpacity>
-                          </View>
+                                <TouchableOpacity
+                                  onPress={() => handleAddPayment('credit_card', parseFloat(cashTenderAmount || remaining.toString()))}
+                                  style={{ flex: 1, backgroundColor: 'white', padding: 16, borderRadius: 16, borderWidth: 2, borderColor: '#3b82f6', alignItems: 'center' }}
+                                >
+                                  <Text style={{ fontSize: 24, marginBottom: 8 }}>💳</Text>
+                                  <Text style={{ fontWeight: '800', color: '#1e40af' }}>{t('pos.checkout.card', language)}</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                  onPress={() => handleAddPayment('bank_deposit', parseFloat(cashTenderAmount || remaining.toString()))}
+                                  style={{ flex: 1, backgroundColor: 'white', padding: 16, borderRadius: 16, borderWidth: 2, borderColor: '#8b5cf6', alignItems: 'center' }}
+                                >
+                                  <Text style={{ fontSize: 24, marginBottom: 8 }}>🏦</Text>
+                                  <Text style={{ fontWeight: '800', color: '#5b21b6' }}>{t('pos.checkout.bank', language)}</Text>
+                                </TouchableOpacity>
+                              </View>
+                            </>
+                          )}
                         </ScrollView>
                       ) : (
                         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -1203,9 +1423,15 @@ function MainApp() {
                           </View>
                           <Text style={{ fontSize: 24, fontWeight: '900', color: '#166534' }}>{t('pos.checkout.fully_paid', language)}</Text>
                           {cartTotal < totalPaid && (
-                            <Text style={{ fontSize: 18, color: '#15803d', fontWeight: 'bold', marginTop: 8 }}>
-                              {t('pos.checkout.change', language)} {formatCurrency(totalPaid - cartTotal, currency)}
-                            </Text>
+                            <View style={{ alignItems: 'center', marginTop: 12 }}>
+                              <Text style={{ fontSize: 18, color: '#15803d', fontWeight: 'bold' }}>
+                                {t('pos.checkout.change', language)} {formatCurrency(totalPaid - cartTotal, currency)}
+                              </Text>
+                              <Text style={{ fontSize: 20, color: '#0369a1', fontWeight: '900', marginTop: 12, backgroundColor: '#e0f2fe', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12, overflow: 'hidden' }}>
+                                {language === 'es' ? 'Entregar Cambio en Córdobas: ' : 'Give Change in Cordobas: '} 
+                                C$ {((totalPaid - cartTotal) * (currency === 'USD' ? usdExchangeRate : 1)).toFixed(2)}
+                              </Text>
+                            </View>
                           )}
                         </View>
                       )}
@@ -1419,9 +1645,17 @@ function MainApp() {
                   ))}
 
                   {lastCompletedOrder.change > 0 && (
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
-                      <Text style={{ fontSize: 16, fontWeight: '800', color: '#16a34a' }}>{t('pos.receipt.change', language)}</Text>
-                      <Text style={{ fontSize: 16, fontWeight: '900', color: '#16a34a' }}>{formatCurrency(lastCompletedOrder.change, currency)}</Text>
+                    <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <Text style={{ fontSize: 16, fontWeight: '800', color: '#16a34a' }}>{t('pos.receipt.change', language)}</Text>
+                        <Text style={{ fontSize: 16, fontWeight: '900', color: '#16a34a' }}>{formatCurrency(lastCompletedOrder.change, currency)}</Text>
+                      </View>
+                      <View style={{ backgroundColor: '#e0f2fe', padding: 8, borderRadius: 8, marginTop: 4, alignItems: 'center' }}>
+                        <Text style={{ fontSize: 14, fontWeight: '800', color: '#0369a1' }}>
+                          {language === 'es' ? 'Cambio en Córdobas: ' : 'Change in Cordobas: '} 
+                          C$ {(currency === 'USD' ? lastCompletedOrder.change * usdExchangeRate : lastCompletedOrder.change).toFixed(2)}
+                        </Text>
+                      </View>
                     </View>
                   )}
                 </View>
@@ -1460,7 +1694,6 @@ function MainApp() {
           </View>
         </View>
       )}
-
     </ErrorBoundary>
   );
 }

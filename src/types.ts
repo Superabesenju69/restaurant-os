@@ -142,6 +142,30 @@ export interface Payment {
   method: string;
   amount: number;
   reference_id?: string | null;
+  cash_shift_id?: string | null;
+}
+
+export interface CashShift {
+  id: string;
+  user_id: string | null;
+  status: 'open' | 'closed';
+  opening_time: string;
+  closing_time?: string | null;
+  starting_cash: number;
+  expected_cash?: number;
+  actual_cash?: number;
+  difference?: number;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface CashAdjustment {
+  id: string;
+  shift_id: string;
+  type: 'cash_in' | 'cash_out';
+  amount: number;
+  reason?: string | null;
+  created_at: string;
 }
 
 /** A line item snapshot on a completed order from `order_line_items`. */

@@ -20,6 +20,7 @@ import type {
     CartItem, CartItemIngredient,
     Promotion, PromotionTarget,
     PosUser,
+    CashShift, CashAdjustment,
 } from '../types';
 
 // Re-export cart types so existing imports from posStore keep working
@@ -114,8 +115,19 @@ interface PosState {
     cancelKitchenTicketsForItem: (itemName: string) => Promise<void>;
     isItemAvailable: (item: MenuItem) => boolean;
     printCustomerReceipt: (orderData: Order) => Promise<boolean>;
-
     setupSubscriptions: () => void;
+
+    // Cash Drawer Turnos State & Actions
+    activeCashShift: CashShift | null;
+    showCashRegisterModal: boolean;
+    setShowCashRegisterModal: (show: boolean) => void;
+    fetchActiveCashShift: () => Promise<void>;
+    openCashShift: (startingCash: number) => Promise<boolean>;
+    closeCashShift: (actualCash: number, notes?: string | null) => Promise<boolean>;
+    addCashAdjustment: (type: 'cash_in' | 'cash_out', amount: number, reason?: string | null) => Promise<boolean>;
+    fetchCashShiftSummary: (shiftId: string) => Promise<{ cashSales: number; adjustmentsIn: number; adjustmentsOut: number } | null>;
+    usdExchangeRate: number;
+    setUsdExchangeRate: (rate: number) => Promise<void>;
 }
 
 // Guard to prevent concurrent saveOrder calls that cause Hermes OOM during JSON.stringify
@@ -142,6 +154,14 @@ export const usePosStore = create<PosState>((set, get) => ({
     isLoadingOrders: false,
     inspectingCartItemId: null,
     inspectingSubItemId: null,
+
+    // Cash Drawer Turnos State
+    activeCashShift: null,
+    showCashRegisterModal: false,
+    setShowCashRegisterModal: (show) => set({ showCashRegisterModal: show }),
+
+    currentPosUser: null,
+    usdExchangeRate: 36.00,
 
     // Promotions Engine defaults
     availablePromotions: [],
@@ -433,8 +453,10 @@ export const usePosStore = create<PosState>((set, get) => ({
         set({ tenantId: null, tenantName: null, tenantSubdomain: null, currentPosUser: null });
     },
 
-    currentPosUser: null,
-    posLogin: (user) => set({ currentPosUser: user }),
+    posLogin: (user) => {
+        set({ currentPosUser: user });
+        get().fetchActiveCashShift();
+    },
     posLogout: () => set({
         currentPosUser: null,
         screen: 'home',
@@ -446,6 +468,7 @@ export const usePosStore = create<PosState>((set, get) => ({
         activeOrderNumber: null,
         inspectingCartItemId: null,
         inspectingSubItemId: null,
+        activeCashShift: null
     }),
 
     setScreen: (screen) => set({ screen }),
@@ -454,9 +477,16 @@ export const usePosStore = create<PosState>((set, get) => ({
         set({ inspectingCartItemId: cartId, inspectingSubItemId: null });
     },
     setInspectingSubItemId: (subCartId) => set({ inspectingSubItemId: subCartId }),
+    setUsdExchangeRate: async (rate: number) => {
+        set({ usdExchangeRate: rate });
+        await AsyncStorage.setItem('pos_usd_exchange_rate', String(rate));
+    },
 
     fetchSettings: async () => {
         const localLang = await AsyncStorage.getItem('pos_language');
+        const localRate = await AsyncStorage.getItem('pos_usd_exchange_rate');
+        const parsedRate = localRate ? parseFloat(localRate) : 36.00;
+
         const { data: settingsData } = await supabase.from('restaurant_settings').select('*').limit(1);
         const settings = settingsData && settingsData.length > 0 ? settingsData[0] : null;
         const { data: tablesData } = await supabase.from('tables').select('*').order('name');
@@ -469,6 +499,7 @@ export const usePosStore = create<PosState>((set, get) => ({
             themeMode: settings?.theme_mode || 'light',
             language: localLang || settings?.language || 'es',
             currency: settings?.currency || 'USD',
+            usdExchangeRate: parsedRate,
             tables: tablesData || [],
             zones: zonesData || [],
             printers: printers || [],
@@ -1532,12 +1563,14 @@ export const usePosStore = create<PosState>((set, get) => ({
 
             // 1.5 Record the payments
             if (payments && payments.length > 0) {
+                const activeShift = get().activeCashShift;
                 const paymentRecords = payments.map(p => ({
                     order_id: activeOrderId,
                     amount: p.amount,
                     method: p.method,
                     reference_id: p.reference_id || null,
-                    status: 'completed'
+                    status: 'completed',
+                    cash_shift_id: p.method === 'cash' ? (activeShift?.id || null) : null
                 }));
                 const { error: paymentError } = await supabase.from('payments').insert(paymentRecords);
                 if (paymentError) console.error("Payment recording error:", paymentError);
@@ -1711,6 +1744,133 @@ export const usePosStore = create<PosState>((set, get) => ({
         } catch (error) {
             console.error("Checkout failed:", error);
             set({ isLoading: false });
+            return null;
+        }
+    },
+    fetchActiveCashShift: async () => {
+        const user = get().currentPosUser;
+        if (!user) return;
+        try {
+            const { data, error } = await supabase
+                .from('cash_shifts')
+                .select('*')
+                .eq('user_id', user.id)
+                .eq('status', 'open')
+                .limit(1);
+            if (error) throw error;
+            if (data && data.length > 0) {
+                set({ activeCashShift: data[0] });
+            } else {
+                set({ activeCashShift: null });
+            }
+        } catch (e) {
+            console.error('Error fetching active cash shift:', e);
+        }
+    },
+    openCashShift: async (startingCash) => {
+        const user = get().currentPosUser;
+        if (!user) return false;
+        try {
+            const { data, error } = await supabase
+                .from('cash_shifts')
+                .insert([{
+                    user_id: user.id,
+                    status: 'open',
+                    starting_cash: startingCash,
+                    expected_cash: startingCash
+                }])
+                .select()
+                .single();
+            if (error || !data) {
+                console.error('Failed to open cash shift:', error);
+                return false;
+            }
+            set({ activeCashShift: data });
+            return true;
+        } catch (e) {
+            console.error('Error opening cash shift:', e);
+            return false;
+        }
+    },
+    closeCashShift: async (actualCash, notes) => {
+        const activeShift = get().activeCashShift;
+        if (!activeShift) return false;
+        try {
+            const summary = await get().fetchCashShiftSummary(activeShift.id);
+            const expectedCash = Number(activeShift.starting_cash) + 
+                Number(summary?.cashSales || 0) + 
+                Number(summary?.adjustmentsIn || 0) - 
+                Number(summary?.adjustmentsOut || 0);
+            const difference = actualCash - expectedCash;
+
+            const { error } = await supabase
+                .from('cash_shifts')
+                .update({
+                    status: 'closed',
+                    closing_time: new Date().toISOString(),
+                    expected_cash: expectedCash,
+                    actual_cash: actualCash,
+                    difference: difference,
+                    notes: notes || null
+                })
+                .eq('id', activeShift.id);
+
+            if (error) {
+                console.error('Failed to close cash shift:', error);
+                return false;
+            }
+            set({ activeCashShift: null });
+            return true;
+        } catch (e) {
+            console.error('Error closing cash shift:', e);
+            return false;
+        }
+    },
+    addCashAdjustment: async (type, amount, reason) => {
+        const activeShift = get().activeCashShift;
+        if (!activeShift) return false;
+        try {
+            const { error } = await supabase
+                .from('cash_adjustments')
+                .insert([{
+                    shift_id: activeShift.id,
+                    type,
+                    amount,
+                    reason: reason || null
+                }]);
+            if (error) {
+                console.error('Failed to add cash adjustment:', error);
+                return false;
+            }
+            await get().fetchActiveCashShift();
+            return true;
+        } catch (e) {
+            console.error('Error adding cash adjustment:', e);
+            return false;
+        }
+    },
+    fetchCashShiftSummary: async (shiftId) => {
+        try {
+            const { data: payments, error: payErr } = await supabase
+                .from('payments')
+                .select('amount')
+                .eq('cash_shift_id', shiftId)
+                .eq('method', 'cash');
+            if (payErr) throw payErr;
+            
+            const { data: adjs, error: adjErr } = await supabase
+                .from('cash_adjustments')
+                .select('type, amount')
+                .eq('shift_id', shiftId);
+            if (adjErr) throw adjErr;
+
+            const cashSales = (payments || []).reduce((sum, p) => sum + Number(p.amount), 0);
+            const adjustmentsIn = (adjs || []).filter(a => a.type === 'cash_in').reduce((sum, a) => sum + Number(a.amount), 0);
+            const adjustmentsOut = (adjs || []).filter(a => a.type === 'cash_out').reduce((sum, a) => sum + Number(a.amount), 0);
+
+            return { cashSales, adjustmentsIn, adjustmentsOut };
+        } catch (e) {
+            console.error('Error fetching cash shift summary:', e);
             return null;
         }
     }

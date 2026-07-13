@@ -47,6 +47,22 @@ export default function PinLoginScreen({ onLogin }: Props) {
         setLoading(true);
         setError('');
         try {
+            // Check if tenant is active
+            if (tenantId) {
+                const { data: tenantData } = await supabase
+                    .from('tenants')
+                    .select('active')
+                    .eq('id', tenantId)
+                    .single();
+                
+                if (tenantData && tenantData.active === false) {
+                    setError(language === 'es' ? 'Sucursal suspendida por falta de pago. Contacte a soporte.' : 'Branch account suspended due to unpaid subscription. Contact support.');
+                    setPin('');
+                    setLoading(false);
+                    return;
+                }
+            }
+
             const { data, error: dbErr } = await supabase
                 .from('usuarios')
                 .select('id, nombre, apellido, role, active')
@@ -95,14 +111,30 @@ export default function PinLoginScreen({ onLogin }: Props) {
         setActivating(true);
         setActivationError('');
         try {
-            const { data, error: tErr } = await supabase
+            let { data, error: tErr } = await supabase
                 .from('tenants')
-                .select('id, name, subdomain')
+                .select('id, name, subdomain, active')
                 .eq('subdomain', subdomainInput.trim().toLowerCase())
                 .single();
 
-            if (tErr || !data) {
-                setActivationError(language === 'es' ? 'Código de restaurante inválido.' : 'Invalid restaurant code.');
+            if (tErr) {
+                // Fallback query if 'active' column is missing
+                const fallbackRes = await supabase
+                    .from('tenants')
+                    .select('id, name, subdomain')
+                    .eq('subdomain', subdomainInput.trim().toLowerCase())
+                    .single();
+                
+                if (fallbackRes.error) {
+                    setActivationError(language === 'es' ? 'Código de restaurante inválido.' : 'Invalid restaurant code.');
+                    setActivating(false);
+                    return;
+                }
+                data = { ...fallbackRes.data, active: true } as any;
+            }
+
+            if (data.active === false) {
+                setActivationError(language === 'es' ? 'Esta sucursal está suspendida por falta de pago.' : 'This restaurant branch is suspended due to unpaid subscription.');
                 setActivating(false);
                 return;
             }
