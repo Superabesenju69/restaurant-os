@@ -315,12 +315,20 @@ export default function OrdersScreen({ bgStr, tp, language }: OrdersScreenProps)
 
               <View style={{ padding: 24, backgroundColor: '#f8fafc', borderTopWidth: 1, borderTopColor: '#e2e8f0', gap: 12 }}>
                 <TouchableOpacity
-                  onPress={() => {
+                  onPress={async () => {
                     const pos = usePosStore.getState();
                     if (!pos.localReceiptPrinterId) {
                       Alert.alert(t('pos.receipt.no_printer', language), t('pos.receipt.no_printer_desc', language));
                     } else {
-                      pos.printCustomerReceipt(selectedPastOrder);
+                      const success = await pos.printCustomerReceipt(selectedPastOrder);
+                      if (!success) {
+                        Alert.alert(
+                          language === 'es' ? 'Error de Impresión' : 'Print Error',
+                          language === 'es'
+                            ? 'No se pudo conectar a la impresora.\n\nPor favor verifica:\n1. Que tu celular esté conectado a la misma red WiFi que la impresora.\n2. Que la impresora esté encendida y tenga papel.\n3. Que la dirección IP de la impresora en los Ajustes sea correcta.'
+                            : 'Could not connect to the printer.\n\nPlease verify:\n1. That your phone is connected to the same WiFi network as the printer.\n2. That the printer is turned on and has paper.\n3. That the printer IP address in Settings is correct.'
+                        );
+                      }
                     }
                   }}
                   style={{ backgroundColor: tp[600], paddingVertical: 14, borderRadius: 12, alignItems: 'center' }}
