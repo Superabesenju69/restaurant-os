@@ -320,13 +320,29 @@ export default function OrdersScreen({ bgStr, tp, language }: OrdersScreenProps)
                     if (!pos.localReceiptPrinterId) {
                       Alert.alert(t('pos.receipt.no_printer', language), t('pos.receipt.no_printer_desc', language));
                     } else {
-                      const success = await pos.printCustomerReceipt(selectedPastOrder);
-                      if (!success) {
+                      const result = await pos.printCustomerReceipt(selectedPastOrder);
+                      if (!result.success) {
+                        let errMsg = '';
+                        if (result.error === 'NO_NATIVE_MODULE') {
+                          errMsg = language === 'es'
+                            ? 'El módulo de red local no está disponible en este entorno (ej. si estás en navegador web o Expo Go). Por favor usa el APK instalado en tu tableta.'
+                            : 'Local network printing is not supported in this environment (e.g. web browser or Expo Go). Please use the compiled APK on your tablet.';
+                        } else if (result.error === 'TIMEOUT') {
+                          errMsg = language === 'es'
+                            ? 'Tiempo de espera agotado al conectar a la impresora. Verifica que esté encendida y en la misma red WiFi.'
+                            : 'Connection timed out. Make sure the printer is turned on and connected to the same WiFi.';
+                        } else if (result.error === 'CONNECTION_FAILED') {
+                          errMsg = language === 'es'
+                            ? 'Error de conexión física. Verifica que la dirección IP de la impresora en Ajustes sea correcta y que esté conectada al router.'
+                            : 'Connection failed. Verify that the printer IP address in Settings is correct and it is connected to the router.';
+                        } else {
+                          errMsg = language === 'es'
+                            ? `Error de impresión (${result.error}). Verifica la configuración de red.`
+                            : `Print error (${result.error}). Verify your network configuration.`;
+                        }
                         Alert.alert(
                           language === 'es' ? 'Error de Impresión' : 'Print Error',
-                          language === 'es'
-                            ? 'No se pudo conectar a la impresora.\n\nPor favor verifica:\n1. Que tu celular esté conectado a la misma red WiFi que la impresora.\n2. Que la impresora esté encendida y tenga papel.\n3. Que la dirección IP de la impresora en los Ajustes sea correcta.'
-                            : 'Could not connect to the printer.\n\nPlease verify:\n1. That your phone is connected to the same WiFi network as the printer.\n2. That the printer is turned on and has paper.\n3. That the printer IP address in Settings is correct.'
+                          errMsg
                         );
                       }
                     }

@@ -2,7 +2,8 @@ import { Buffer } from 'buffer';
 
 let TcpSocket: any = null;
 try {
-    TcpSocket = require('react-native-tcp-socket').default;
+    const tcpModule = require('react-native-tcp-socket');
+    TcpSocket = tcpModule.default || tcpModule;
 } catch (e) {
     console.warn("TcpSocket native module not found. Direct printing will not work in this environment (e.g. Expo Go).", e);
 }
@@ -196,9 +197,8 @@ export const buildReceiptBuffer = (job: PrintJob): Buffer => {
 export const printToNetwork = async (ip: string, port: number = 9100, buffer: Buffer): Promise<boolean> => {
     return new Promise((resolve, reject) => {
         if (!TcpSocket) {
-            console.warn("Printing bypassed: TcpSocket native module is missing (likely running in Expo Go).");
-            // Resolve false to indicate failure without crashing
-            return resolve(false);
+            console.warn("Printing bypassed: TcpSocket native module is missing.");
+            return reject(new Error('NO_NATIVE_MODULE'));
         }
 
         try {
@@ -217,13 +217,13 @@ export const printToNetwork = async (ip: string, port: number = 9100, buffer: Bu
             client.setTimeout(5000, () => {
                 console.warn(`Printer timeout at ${ip}:${port}`);
                 client.destroy();
-                reject(new Error('Printer timeout'));
+                reject(new Error('TIMEOUT'));
             });
 
             client.on('error', (error: any) => {
                 console.warn(`Printer connection failed at ${ip}:${port}`, error);
                 client.destroy();
-                reject(error);
+                reject(new Error('CONNECTION_FAILED'));
             });
         } catch (e) {
             reject(e);

@@ -32,8 +32,8 @@ export async function printCustomerReceipt(
     orderData: ReceiptOrderData,
     printer: Printer,
     receiptTemplate?: any
-): Promise<boolean> {
-    if (!printer.ip_address) return false;
+): Promise<{ success: boolean; error?: string }> {
+    if (!printer.ip_address) return { success: false, error: 'NO_IP' };
 
     try {
         // Unify cart/items structure from old orders vs new orders
@@ -76,9 +76,9 @@ export async function printCustomerReceipt(
         });
 
         await printToNetwork(printer.ip_address, printer.port || 9100, buffer);
-        return true;
-    } catch (e: unknown) {
+        return { success: true };
+    } catch (e: any) {
         console.error("TCP Receipt Print Error:", e);
-        return false;
+        return { success: false, error: e.message || 'UNKNOWN' };
     }
 }

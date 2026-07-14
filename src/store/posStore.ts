@@ -114,7 +114,7 @@ interface PosState {
     checkout: (payments: Payment[]) => Promise<{ order_number: string, table_name: string | null } | null>;
     cancelKitchenTicketsForItem: (itemName: string) => Promise<void>;
     isItemAvailable: (item: MenuItem) => boolean;
-    printCustomerReceipt: (orderData: Order) => Promise<boolean>;
+    printCustomerReceipt: (orderData: Order) => Promise<{ success: boolean; error?: string }>;
     setupSubscriptions: () => void;
 
     // Cash Drawer Turnos State & Actions
@@ -885,10 +885,10 @@ export const usePosStore = create<PosState>((set, get) => ({
 
     printCustomerReceipt: async (orderData: any) => {
         const localId = get().localReceiptPrinterId;
-        if (!localId) return false;
+        if (!localId) return { success: false, error: 'NO_PRINTER_SELECTED' };
 
         const printer = get().printers.find(p => p.id === localId);
-        if (!printer || !printer.ip_address) return false;
+        if (!printer || !printer.ip_address) return { success: false, error: 'NO_IP' };
 
         const enriched = {
             ...orderData,
