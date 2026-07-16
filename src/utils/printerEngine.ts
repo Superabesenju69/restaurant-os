@@ -230,3 +230,10 @@ export const printToNetwork = async (ip: string, port: number = 9100, buffer: Bu
         }
     });
 };
+
+export const openCashDrawer = async (ip: string, port: number = 9100): Promise<boolean> => {
+    // ESC p m t1 t2
+    // m = 0 (drawer 1), t1 = 25 (50ms pulse ON), t2 = 250 (500ms pulse OFF)
+    const buffer = Buffer.from('\x1B\x70\x00\x19\xFA', 'latin1');
+    return printToNetwork(ip, port, buffer);
+};

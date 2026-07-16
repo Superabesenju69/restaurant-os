@@ -9,7 +9,7 @@ import {
     refundInventoryForCartItem as refundInventoryForCartItemImpl,
     adjustSingleIngredientStock as adjustSingleIngredientStockImpl
 } from '../services/inventoryService';
-import { printCustomerReceipt as printCustomerReceiptImpl } from '../services/printerService';
+import { printCustomerReceipt as printCustomerReceiptImpl, triggerCashDrawer as triggerCashDrawerImpl } from '../services/printerService';
 import type {
     ScreenName, OrderType,
     MenuItem, ItemOption, ItemOptionChoice, Recipe,
@@ -115,6 +115,7 @@ interface PosState {
     cancelKitchenTicketsForItem: (itemName: string) => Promise<void>;
     isItemAvailable: (item: MenuItem) => boolean;
     printCustomerReceipt: (orderData: Order) => Promise<{ success: boolean; error?: string }>;
+    openCashDrawer: () => Promise<{ success: boolean; error?: string }>;
     setupSubscriptions: () => void;
 
     // Cash Drawer Turnos State & Actions
@@ -896,6 +897,16 @@ export const usePosStore = create<PosState>((set, get) => ({
         };
 
         return printCustomerReceiptImpl(enriched, printer, get().receiptTemplate);
+    },
+
+    openCashDrawer: async () => {
+        const localId = get().localReceiptPrinterId;
+        if (!localId) return { success: false, error: 'NO_PRINTER_SELECTED' };
+
+        const printer = get().printers.find(p => p.id === localId);
+        if (!printer || !printer.ip_address) return { success: false, error: 'NO_IP' };
+
+        return triggerCashDrawerImpl(printer);
     },
 
     fetchOrders: async () => {

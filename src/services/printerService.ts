@@ -4,7 +4,7 @@
  * Extracted from posStore.ts — handles building receipt data and sending
  * print jobs to network printers via the printerEngine utility.
  */
-import { buildReceiptBuffer, printToNetwork } from '../utils/printerEngine';
+import { buildReceiptBuffer, printToNetwork, openCashDrawer as openDrawerKick } from '../utils/printerEngine';
 
 import type { CartItem, OrderLineItem, Payment, Printer } from '../types';
 
@@ -79,6 +79,17 @@ export async function printCustomerReceipt(
         return { success: true };
     } catch (e: any) {
         console.error("TCP Receipt Print Error:", e);
+        return { success: false, error: e.message || 'UNKNOWN' };
+    }
+}
+
+export async function triggerCashDrawer(printer: Printer): Promise<{ success: boolean; error?: string }> {
+    if (!printer.ip_address) return { success: false, error: 'NO_IP' };
+    try {
+        await openDrawerKick(printer.ip_address, printer.port || 9100);
+        return { success: true };
+    } catch (e: any) {
+        console.error("TCP Drawer Kick Error:", e);
         return { success: false, error: e.message || 'UNKNOWN' };
     }
 }

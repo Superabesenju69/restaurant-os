@@ -330,6 +330,37 @@ export default function HomeScreen({ bgStr, tp, language, mapWidth, mapHeight }:
                   </TouchableOpacity>
                 ))}
               </View>
+
+              {localReceiptPrinterId && (
+                <TouchableOpacity
+                  onPress={async () => {
+                    const pos = usePosStore.getState();
+                    const res = await pos.openCashDrawer();
+                    if (!res.success) {
+                      Alert.alert(
+                        language === 'es' ? 'Error al abrir gaveta' : 'Drawer Open Error',
+                        language === 'es'
+                          ? `No se pudo conectar a la impresora para abrir la gaveta (${res.error}).`
+                          : `Could not connect to printer to open cash drawer (${res.error}).`
+                      );
+                    }
+                  }}
+                  style={{
+                    marginTop: 12,
+                    backgroundColor: '#10b981',
+                    paddingVertical: 12,
+                    borderRadius: 8,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexDirection: 'row',
+                    gap: 8
+                  }}
+                >
+                  <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 14 }}>
+                    🔓 {language === 'es' ? 'Abrir Gaveta de Dinero' : 'Open Cash Drawer'}
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         </View>
@@ -418,6 +449,38 @@ export default function HomeScreen({ bgStr, tp, language, mapWidth, mapHeight }:
                     </View>
                   ) : (
                     <View>
+                      {/* Open Cash Drawer quick button */}
+                      {localReceiptPrinterId && (
+                        <TouchableOpacity
+                          onPress={async () => {
+                            const pos = usePosStore.getState();
+                            const res = await pos.openCashDrawer();
+                            if (!res.success) {
+                              Alert.alert(
+                                language === 'es' ? 'Error al abrir' : 'Open Error',
+                                language === 'es'
+                                  ? `No se pudo conectar a la impresora para abrir la gaveta (${res.error}).`
+                                  : `Could not connect to printer to open cash drawer (${res.error}).`
+                              );
+                            }
+                          }}
+                          style={{
+                            backgroundColor: '#10b981',
+                            paddingVertical: 14,
+                            borderRadius: 12,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexDirection: 'row',
+                            gap: 8,
+                            marginBottom: 20
+                          }}
+                        >
+                          <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 16 }}>
+                            🔓 {language === 'es' ? 'Abrir Gaveta de Dinero' : 'Open Cash Drawer'}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+
                       {/* Current Shift Info Card */}
                       <View style={{ backgroundColor: '#f0f9ff', borderLeftWidth: 4, borderLeftColor: '#0284c7', borderRadius: 12, padding: 16, marginBottom: 24 }}>
                         <Text style={{ fontSize: 14, color: '#0369a1', fontWeight: '800', textTransform: 'uppercase', marginBottom: 12 }}>

@@ -1477,6 +1477,11 @@ function MainApp() {
                             try {
                               const result = await checkout(currentPayments);
                               if (result) {
+                                const hasCash = currentPayments.some(p => p.method === 'cash');
+                                if (hasCash) {
+                                  const pos = usePosStore.getState();
+                                  pos.openCashDrawer().catch(err => console.warn("Auto Drawer Kick Error:", err));
+                                }
                                 setShowCheckoutModal(false);
                                 setLastCompletedOrder({
                                   ...result,
