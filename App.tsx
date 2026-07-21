@@ -54,7 +54,7 @@ function MainApp() {
 
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
-  const isTablet = width >= 768 || height >= 768;
+  const isTablet = Math.min(width, height) >= 600;
   const isMobile = width < 768;
   const [isFooterExpanded, setIsFooterExpanded] = useState(false);
 
@@ -1273,7 +1273,7 @@ function MainApp() {
                           <Text style={{ fontSize: 14, color: '#64748b', marginTop: 8 }}>{t('pos.checkout.tap_insert', language)}</Text>
                         </View>
                       ) : !isFullyPaid ? (
-                        <ScrollView showsVerticalScrollIndicator={false}>
+                        <View style={{ flex: 1 }}>
                           <Text style={{ fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 16 }}>{t('pos.checkout.add_payment', language)}</Text>
 
                           {/* Currency Tab Selector */}
@@ -1419,7 +1419,7 @@ function MainApp() {
                               </View>
                             </>
                           )}
-                        </ScrollView>
+                        </View>
                       ) : (
                         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                           <View style={{ width: 80, height: 80, backgroundColor: '#dcfce7', borderRadius: 40, alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
