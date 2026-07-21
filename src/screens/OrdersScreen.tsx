@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { StatusBar } from 'expo-status-bar';
-import { View, Text, SafeAreaView, TouchableOpacity, FlatList, ActivityIndicator, ScrollView, Alert } from 'react-native';
+import { View, Text, SafeAreaView, TouchableOpacity, FlatList, ActivityIndicator, ScrollView, Alert, useWindowDimensions } from 'react-native';
 import { usePosStore } from "../store/posStore";
 import { t } from '../utils/i18n';
 import { formatCurrency } from '../utils/currency';
@@ -13,6 +13,9 @@ interface OrdersScreenProps {
 }
 
 export default function OrdersScreen({ bgStr, tp, language }: OrdersScreenProps) {
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+
   const {
     setScreen, ordersList, isLoadingOrders, loadOrder, items, allIngredients, currency
   } = usePosStore();

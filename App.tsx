@@ -758,9 +758,10 @@ function MainApp() {
               ) : (
                 // --- MENU GRID VIEW ---
                 <FlatList
+                  key={width < 600 ? 'cols-2' : width < 900 ? 'cols-3' : 'cols-4'}
                   data={displayedItems}
                   keyExtractor={(i: MenuItem) => i.id}
-                  numColumns={3}
+                  numColumns={width < 600 ? 2 : width < 900 ? 3 : 4}
                   columnWrapperStyle={{ gap: 16, marginBottom: 16 }}
                   ListEmptyComponent={
                     <View className="py-20 items-center justify-center">

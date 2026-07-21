@@ -1,6 +1,6 @@
 import React from "react";
 import { StatusBar } from 'expo-status-bar';
-import { View, Text, SafeAreaView, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, SafeAreaView, TouchableOpacity, ScrollView, useWindowDimensions } from 'react-native';
 import { usePosStore } from "../store/posStore";
 import { t } from '../utils/i18n';
 import type { Order, KitchenTicket, KitchenTicketItem } from '../types';
@@ -11,6 +11,9 @@ interface ServingScreenProps {
 }
 
 export default function ServingScreen({ bgStr, language }: ServingScreenProps) {
+  const { width } = useWindowDimensions();
+  const cardWidth = width < 600 ? width - 40 : width < 900 ? (width - 56) / 2 : (width - 72) / 3;
+
   const {
     setScreen, ordersList, tables, currentPosUser
   } = usePosStore();
@@ -66,7 +69,7 @@ export default function ServingScreen({ bgStr, language }: ServingScreenProps) {
               const elapsedMin = Math.floor((endTime - new Date(batch.created_at).getTime()) / 60000);
 
               return (
-                <View key={batch.id} style={{ width: 360, backgroundColor: 'white', borderRadius: 16, borderWidth: 2, borderColor: allReady ? '#10b981' : '#e5e7eb', overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 12 }}>
+                <View key={batch.id} style={{ width: cardWidth, backgroundColor: 'white', borderRadius: 16, borderWidth: 2, borderColor: allReady ? '#10b981' : '#e5e7eb', overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 12 }}>
                   {/* Header */}
                   <View style={{ padding: 16, backgroundColor: allReady ? '#ecfdf5' : '#f9fafb', borderBottomWidth: 1, borderBottomColor: allReady ? '#d1fae5' : '#e5e7eb', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <View>

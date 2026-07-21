@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { StatusBar } from 'expo-status-bar';
-import { View, Text, SafeAreaView, TouchableOpacity, ScrollView, Image, TextInput, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, SafeAreaView, TouchableOpacity, ScrollView, Image, TextInput, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
 import { usePosStore } from "../store/posStore";
 import { t } from '../utils/i18n';
 import type { FloorTable, Printer } from '../types';
@@ -17,6 +17,9 @@ interface HomeScreenProps {
 }
 
 export default function HomeScreen({ bgStr, tp, language, mapWidth, mapHeight }: HomeScreenProps) {
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+
   const {
     setScreen, tableServiceEnabled, mapBackgroundUrl, tables, startOrder,
     currentPosUser, posLogout, printers, localReceiptPrinterId, setLocalReceiptPrinterId,
@@ -74,70 +77,81 @@ export default function HomeScreen({ bgStr, tp, language, mapWidth, mapHeight }:
   if (!currentPosUser) return null;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: bgStr, alignItems: 'center', justifyContent: 'center' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: bgStr }}>
       <StatusBar style="dark" />
-      {/* User + logout */}
-      <View style={{ position: 'absolute', top: 20, right: 20, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        <TouchableOpacity 
-          onPress={() => setShowCashRegisterModal(true)} 
-          style={{ backgroundColor: activeCashShift ? '#e0f2fe' : '#fee2e2', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }}
-        >
-          <Text style={{ fontSize: 13, fontWeight: '700', color: activeCashShift ? '#0284c7' : '#dc2626' }}>
-            {activeCashShift ? (language === 'es' ? '💵 Caja Abierta' : '💵 Register Open') : (language === 'es' ? '💵 Abrir Caja' : '💵 Open Register')}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => setShowSettingsModal(true)} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: '#4b5563' }}>{t('pos.home.settings', language)}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => setShowTimeClockModal(true)} style={{ backgroundColor: '#ccfbf1', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: '#0d9488' }}>⏰ {language === 'es' ? 'Marcación' : 'Time Clock'}</Text>
-        </TouchableOpacity>
-        <View style={{ alignItems: 'flex-end' }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: '#111827' }}>{currentPosUser.full_name}</Text>
-          <Text style={{ fontSize: 11, color: '#9ca3af', textTransform: 'capitalize' }}>{currentPosUser.role.replace('_', ' ')}</Text>
+      <ScrollView contentContainerStyle={{ flexGrow: 1, paddingVertical: 24, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' }} showsVerticalScrollIndicator={false}>
+        
+        {/* User + Header Bar */}
+        <View style={{ width: '100%', maxWidth: 900, flexDirection: isLandscape ? 'row' : 'column', justifyContent: 'space-between', alignItems: isLandscape ? 'center' : 'stretch', gap: 12, marginBottom: 24 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <View>
+              <Text style={{ fontSize: 18, fontWeight: '800', color: '#111827' }}>{currentPosUser.full_name}</Text>
+              <Text style={{ fontSize: 12, color: '#6b7280', textTransform: 'capitalize' }}>{currentPosUser.role.replace('_', ' ')}</Text>
+            </View>
+          </View>
+
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity 
+              onPress={() => setShowCashRegisterModal(true)} 
+              style={{ backgroundColor: activeCashShift ? '#e0f2fe' : '#fee2e2', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: '700', color: activeCashShift ? '#0284c7' : '#dc2626' }}>
+                {activeCashShift ? (language === 'es' ? '💵 Caja Abierta' : '💵 Register Open') : (language === 'es' ? '💵 Abrir Caja' : '💵 Open Register')}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowSettingsModal(true)} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#4b5563' }}>{t('pos.home.settings', language)}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowTimeClockModal(true)} style={{ backgroundColor: '#ccfbf1', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#0d9488' }}>⏰ {language === 'es' ? 'Marcación' : 'Time Clock'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={posLogout} style={{ backgroundColor: '#fee2e2', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#dc2626' }}>{t('pos.home.signout', language)}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-        <TouchableOpacity onPress={posLogout} style={{ backgroundColor: '#fee2e2', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: '#dc2626' }}>{t('pos.home.signout', language)}</Text>
-        </TouchableOpacity>
-      </View>
-      <Text style={{ fontSize: 36, fontWeight: '900', color: '#111827', marginBottom: 40 }}>Restaurant OS</Text>
-      <View style={{ width: '80%', gap: 16 }}>
-        <TouchableOpacity
-          style={{ backgroundColor: tp[600], padding: 24, borderRadius: 20, alignItems: 'center' }}
-          onPress={() => {
-            if (tableServiceEnabled) {
-              setShowOrderTypeModal(true);
-            } else {
-              startOrder('take_out');
-            }
-          }}
-        >
-          <Text style={{ color: 'white', fontSize: 22, fontWeight: 'bold' }}>{t('pos.home.new_order', language)}</Text>
-        </TouchableOpacity>
 
-        {tableServiceEnabled && (
+        <Text style={{ fontSize: isLandscape ? 32 : 28, fontWeight: '900', color: '#111827', marginBottom: 24, textAlign: 'center' }}>Restaurant OS</Text>
+
+        {/* Action Cards Container */}
+        <View style={{ width: '100%', maxWidth: 900, flexDirection: isLandscape ? 'row' : 'column', flexWrap: 'wrap', gap: 16 }}>
           <TouchableOpacity
-            style={{ backgroundColor: tp[600], padding: 24, borderRadius: 20, alignItems: 'center' }}
-            onPress={() => setScreen('tables')}
+            style={{ flex: isLandscape ? 1 : undefined, minWidth: isLandscape ? 280 : '100%', backgroundColor: tp[600], padding: 24, borderRadius: 20, alignItems: 'center' }}
+            onPress={() => {
+              if (tableServiceEnabled) {
+                setShowOrderTypeModal(true);
+              } else {
+                startOrder('take_out');
+              }
+            }}
           >
-            <Text style={{ color: 'white', fontSize: 22, fontWeight: 'bold' }}>{t('pos.home.view_floor', language)}</Text>
+            <Text style={{ color: 'white', fontSize: 20, fontWeight: 'bold' }}>{t('pos.home.new_order', language)}</Text>
           </TouchableOpacity>
-        )}
 
-        <TouchableOpacity
-          style={{ backgroundColor: 'white', padding: 24, borderRadius: 20, alignItems: 'center', borderWidth: 1, borderColor: '#e5e7eb' }}
-          onPress={() => setScreen('orders')}
-        >
-          <Text style={{ color: '#111827', fontSize: 22, fontWeight: 'bold' }}>{t('pos.home.order_history', language)}</Text>
-        </TouchableOpacity>
+          {tableServiceEnabled && (
+            <TouchableOpacity
+              style={{ flex: isLandscape ? 1 : undefined, minWidth: isLandscape ? 280 : '100%', backgroundColor: tp[600], padding: 24, borderRadius: 20, alignItems: 'center' }}
+              onPress={() => setScreen('tables')}
+            >
+              <Text style={{ color: 'white', fontSize: 20, fontWeight: 'bold' }}>{t('pos.home.view_floor', language)}</Text>
+            </TouchableOpacity>
+          )}
 
-        <TouchableOpacity
-          style={{ backgroundColor: '#10b981', padding: 24, borderRadius: 20, alignItems: 'center' }}
-          onPress={() => setScreen('serving')}
-        >
-          <Text style={{ color: 'white', fontSize: 22, fontWeight: 'bold' }}>{t('pos.home.ready_orders', language)}</Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={{ flex: isLandscape ? 1 : undefined, minWidth: isLandscape ? 280 : '100%', backgroundColor: 'white', padding: 24, borderRadius: 20, alignItems: 'center', borderWidth: 1, borderColor: '#e5e7eb' }}
+            onPress={() => setScreen('orders')}
+          >
+            <Text style={{ color: '#111827', fontSize: 20, fontWeight: 'bold' }}>{t('pos.home.order_history', language)}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={{ flex: isLandscape ? 1 : undefined, minWidth: isLandscape ? 280 : '100%', backgroundColor: '#10b981', padding: 24, borderRadius: 20, alignItems: 'center' }}
+            onPress={() => setScreen('serving')}
+          >
+            <Text style={{ color: 'white', fontSize: 20, fontWeight: 'bold' }}>{t('pos.home.ready_orders', language)}</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
 
       {/* Order Type Overlay */}
       {showOrderTypeModal && (
@@ -269,14 +283,16 @@ export default function HomeScreen({ bgStr, tp, language, mapWidth, mapHeight }:
 
       {/* Settings Modal */}
       {showSettingsModal && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', zIndex: 60 }}>
-          <View style={{ backgroundColor: 'white', borderRadius: 24, padding: 32, width: '90%', maxWidth: 500, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 10 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-              <Text style={{ fontSize: 24, fontWeight: '900', color: '#111827' }}>{t('pos.settings.title', language)}</Text>
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 16 }}>
+          <View style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '100%', maxWidth: 500, maxHeight: '90%', shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 10 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <Text style={{ fontSize: 22, fontWeight: '900', color: '#111827' }}>{t('pos.settings.title', language)}</Text>
               <TouchableOpacity onPress={() => setShowSettingsModal(false)} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}>
                 <Text style={{ fontWeight: 'bold', color: '#374151' }}>{t('pos.settings.close', language)}</Text>
               </TouchableOpacity>
             </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
 
             <View style={{ marginBottom: 24 }}>
               <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#374151', marginBottom: 12 }}>{t('pos.settings.language', language)}</Text>
@@ -362,6 +378,7 @@ export default function HomeScreen({ bgStr, tp, language, mapWidth, mapHeight }:
                 </TouchableOpacity>
               )}
             </View>
+            </ScrollView>
           </View>
         </View>
       )}

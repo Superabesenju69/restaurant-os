@@ -13,7 +13,7 @@ const GITHUB_REPO = 'restaurant-os';         // TODO: Replace with your repo nam
 const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
 
 /** Current app version — must match the tag format you use in GitHub Releases (e.g. "v1.0.0") */
-const CURRENT_VERSION = 'v1.0.5'; // TODO: Keep in sync with app.json "version"
+const CURRENT_VERSION = 'v1.0.6'; // TODO: Keep in sync with app.json "version"
 
 /**
  * Compare two semver version strings (with or without leading "v").

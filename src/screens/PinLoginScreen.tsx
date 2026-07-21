@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, SafeAreaView, TextInput } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, SafeAreaView, TextInput, ScrollView, useWindowDimensions } from 'react-native';
 import { usePosStore } from '../store/posStore';
 import { t } from '../utils/i18n';
 import TimeClockModal from '../components/TimeClockModal';
@@ -12,6 +12,9 @@ interface Props {
 const DIGITS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'];
 
 export default function PinLoginScreen({ onLogin }: Props) {
+    const { width, height } = useWindowDimensions();
+    const isLandscape = width > height;
+
     const { themeColor, language, tenantId, tenantName, setTenant, clearTenant } = usePosStore();
     const [pin, setPin] = useState('');
     const [error, setError] = useState('');
@@ -105,36 +108,42 @@ export default function PinLoginScreen({ onLogin }: Props) {
 
     async function handleActivate() {
         if (!subdomainInput.trim()) {
-            setActivationError(language === 'es' ? 'Ingrese un código de restaurante.' : 'Enter a restaurant code.');
+            setActivationError(language === 'es' ? 'Ingrese el subdominio.' : 'Enter subdomain.');
             return;
         }
         setActivating(true);
         setActivationError('');
         try {
+            const sub = subdomainInput.trim().toLowerCase();
             let { data, error: tErr } = await supabase
                 .from('tenants')
                 .select('id, name, subdomain, active')
-                .eq('subdomain', subdomainInput.trim().toLowerCase())
+                .eq('subdomain', sub)
                 .single();
 
             if (tErr) {
-                // Fallback query if 'active' column is missing
                 const fallbackRes = await supabase
                     .from('tenants')
                     .select('id, name, subdomain')
-                    .eq('subdomain', subdomainInput.trim().toLowerCase())
+                    .eq('subdomain', sub)
                     .single();
                 
                 if (fallbackRes.error) {
-                    setActivationError(language === 'es' ? 'Código de restaurante inválido.' : 'Invalid restaurant code.');
+                    setActivationError(language === 'es' ? 'Restaurante no encontrado.' : 'Restaurant not found.');
                     setActivating(false);
                     return;
                 }
                 data = { ...fallbackRes.data, active: true } as any;
             }
 
-            if (data.active === false) {
-                setActivationError(language === 'es' ? 'Esta sucursal está suspendida por falta de pago.' : 'This restaurant branch is suspended due to unpaid subscription.');
+            if (!data) {
+                setActivationError(language === 'es' ? 'Restaurante no encontrado.' : 'Restaurant not found.');
+                setActivating(false);
+                return;
+            }
+
+            if ((data as any).active === false) {
+                setActivationError(language === 'es' ? 'Sucursal suspendida.' : 'Branch account suspended.');
                 setActivating(false);
                 return;
             }
@@ -152,14 +161,14 @@ export default function PinLoginScreen({ onLogin }: Props) {
     }));
 
     const themeBgs: Record<string, string> = {
-        teal: '#f0fdfa', // primary-50
+        teal: '#f0fdfa',
         rose: '#fff1f2',
         amber: '#fffbeb',
         indigo: '#eef2ff',
     };
 
     const themePrimary: Record<string, string> = {
-        teal: '#0d9488', // primary-600
+        teal: '#0d9488',
         rose: '#e11d48',
         amber: '#d97706',
         indigo: '#4f46e5',
@@ -171,142 +180,148 @@ export default function PinLoginScreen({ onLogin }: Props) {
     if (!tenantId) {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: bgStr }]}>
-                <View style={[styles.card, { backgroundColor: bgStr }]}>
-                    <View style={[styles.logo, { backgroundColor: primStr }]}>
-                        <Text style={styles.logoText}>🍽</Text>
+                <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                    <View style={[styles.card, { backgroundColor: bgStr }]}>
+                        <View style={[styles.logo, { backgroundColor: primStr }]}>
+                            <Text style={styles.logoText}>🍽</Text>
+                        </View>
+                        <Text style={styles.title}>
+                            {language === 'es' ? 'Activar POS' : 'Activate POS'}
+                        </Text>
+                        <Text style={[styles.subtitle, { textAlign: 'center', marginBottom: 16 }]}>
+                            {language === 'es' 
+                                ? 'Ingrese el código de subdomain de su restaurante para activar esta tablet.' 
+                                : 'Enter your restaurant subdomain code to activate this tablet.'}
+                        </Text>
+
+                        {activationError ? (
+                            <Text style={[styles.errorText, { marginBottom: 12 }]}>{activationError}</Text>
+                        ) : null}
+
+                        <TextInput
+                            value={subdomainInput}
+                            onChangeText={setSubdomainInput}
+                            placeholder={language === 'es' ? 'ej. central' : 'e.g. central'}
+                            placeholderTextColor="#94a3b8"
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            style={styles.input}
+                        />
+
+                        <TouchableOpacity 
+                            onPress={handleActivate} 
+                            disabled={activating}
+                            style={[styles.btn, { backgroundColor: primStr, marginTop: 16 }]}
+                        >
+                            {activating ? (
+                                <ActivityIndicator color="#fff" />
+                            ) : (
+                                <Text style={styles.btnText}>
+                                    {language === 'es' ? 'Activar' : 'Activate'}
+                                </Text>
+                            )}
+                        </TouchableOpacity>
                     </View>
-                    <Text style={styles.title}>
-                        {language === 'es' ? 'Activar POS' : 'Activate POS'}
-                    </Text>
-                    <Text style={[styles.subtitle, { textAlign: 'center', marginBottom: 16 }]}>
-                        {language === 'es' 
-                            ? 'Ingrese el código de subdomain de su restaurante para activar esta tablet.' 
-                            : 'Enter your restaurant subdomain code to activate this tablet.'}
-                    </Text>
-
-                    {activationError ? (
-                        <Text style={[styles.errorText, { marginBottom: 12 }]}>{activationError}</Text>
-                    ) : null}
-
-                    <TextInput
-                        value={subdomainInput}
-                        onChangeText={setSubdomainInput}
-                        placeholder={language === 'es' ? 'ej. central' : 'e.g. central'}
-                        placeholderTextColor="#94a3b8"
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        style={styles.input}
-                    />
-
-                    <TouchableOpacity 
-                        onPress={handleActivate} 
-                        disabled={activating}
-                        style={[styles.btn, { backgroundColor: primStr, marginTop: 16 }]}
-                    >
-                        {activating ? (
-                            <ActivityIndicator color="#fff" />
-                        ) : (
-                            <Text style={styles.btnText}>
-                                {language === 'es' ? 'Activar' : 'Activate'}
-                            </Text>
-                        )}
-                    </TouchableOpacity>
-                </View>
+                </ScrollView>
             </SafeAreaView>
         );
     }
 
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: bgStr }]}>
-            <View style={[styles.card, { backgroundColor: bgStr }]}>
-                {/* Logo */}
-                <View style={[styles.logo, { backgroundColor: primStr }]}>
-                    <Text style={styles.logoText}>🍽</Text>
-                </View>
-                <Text style={styles.title}>
-                    {timeClockMode 
-                        ? (language === 'es' ? 'Marcación Personal' : 'Staff Attendance') 
-                        : t('pos.login.title', language)}
-                </Text>
-                <Text style={styles.subtitle}>
-                    {timeClockMode 
-                        ? (language === 'es' ? 'Ingrese su PIN para registrar asistencia' : 'Enter your PIN to clock punches') 
-                        : t('pos.login.subtitle', language)}
-                </Text>
-
-                {tenantName ? (
-                    <View style={{ alignItems: 'center', marginBottom: 20 }}>
-                        <Text style={{ fontSize: 13, color: '#6b7280', fontWeight: 'bold' }}>
-                            {language === 'es' ? `Conectado a: ${tenantName}` : `Connected to: ${tenantName}`}
+            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                <View style={[
+                    styles.card, 
+                    { backgroundColor: bgStr },
+                    isLandscape && { width: Math.min(800, width * 0.9), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingVertical: 24 }
+                ]}>
+                    <View style={[isLandscape && { flex: 1, paddingRight: 24, alignItems: 'center' }]}>
+                        <View style={[styles.logo, { backgroundColor: primStr }]}>
+                            <Text style={styles.logoText}>🍽</Text>
+                        </View>
+                        <Text style={[styles.title, { textAlign: 'center' }]}>
+                            {timeClockMode 
+                                ? (language === 'es' ? 'Marcación Personal' : 'Staff Attendance') 
+                                : t('pos.login.title', language)}
                         </Text>
-                        <TouchableOpacity onPress={clearTenant} style={{ marginTop: 4 }}>
-                            <Text style={{ fontSize: 12, color: primStr, fontWeight: 'bold', textDecorationLine: 'underline' }}>
-                                {language === 'es' ? 'Cambiar de Restaurante' : 'Change Restaurant'}
+                        <Text style={[styles.subtitle, { textAlign: 'center' }]}>
+                            {timeClockMode 
+                                ? (language === 'es' ? 'Ingrese su PIN para registrar asistencia' : 'Enter your PIN to clock punches') 
+                                : t('pos.login.subtitle', language)}
+                        </Text>
+
+                        {tenantName ? (
+                            <View style={{ alignItems: 'center', marginBottom: 20 }}>
+                                <Text style={{ fontSize: 13, color: '#6b7280', fontWeight: 'bold', textAlign: 'center' }}>
+                                    {language === 'es' ? `Conectado a: ${tenantName}` : `Connected to: ${tenantName}`}
+                                </Text>
+                                <TouchableOpacity onPress={clearTenant} style={{ marginTop: 4 }}>
+                                    <Text style={{ fontSize: 12, color: primStr, fontWeight: 'bold', textDecorationLine: 'underline' }}>
+                                        {language === 'es' ? 'Cambiar de Restaurante' : 'Change Restaurant'}
+                                    </Text>
+                                </TouchableOpacity>
+                            </View>
+                        ) : null}
+
+                        <TouchableOpacity
+                            onPress={() => {
+                                setTimeClockMode(!timeClockMode);
+                                setError('');
+                                setPin('');
+                            }}
+                            style={[styles.modeBtn, { borderColor: primStr }]}
+                        >
+                            <Text style={[styles.modeBtnText, { color: primStr }]}>
+                                {timeClockMode 
+                                    ? (language === 'es' ? '← Iniciar Sesión POS' : '← POS Order Login')
+                                    : `⏰ ${language === 'es' ? 'Reloj de Marcación' : 'Time Clock'}`}
                             </Text>
                         </TouchableOpacity>
                     </View>
-                ) : null}
 
-                {/* PIN dots */}
-                <View style={styles.dotsRow}>
-                    {dots.map((d, i) => (
-                        <View key={i} style={[styles.dot, { borderColor: primStr }, d.filled && { backgroundColor: primStr }]} />
-                    ))}
+                    <View style={[isLandscape && { flex: 1, alignItems: 'center' }]}>
+                        <View style={styles.dotsRow}>
+                            {dots.map((d, i) => (
+                                <View key={i} style={[styles.dot, { borderColor: primStr }, d.filled && { backgroundColor: primStr }]} />
+                            ))}
+                        </View>
+
+                        {error ? (
+                            <View style={{ marginBottom: 16 }}>
+                                <Text style={styles.errorText}>{error}</Text>
+                            </View>
+                        ) : null}
+
+                        {loading ? (
+                            <View style={{ height: 280, justifyContent: 'center', alignItems: 'center' }}>
+                                <ActivityIndicator size="large" color={primStr} />
+                            </View>
+                        ) : (
+                            <View style={styles.numpad}>
+                                {DIGITS.map((d, idx) => (
+                                    <TouchableOpacity
+                                        key={idx}
+                                        disabled={d === ''}
+                                        onPress={() => pressDigit(d)}
+                                        style={[
+                                            styles.numBtn,
+                                            d === '' && { backgroundColor: 'transparent', borderWidth: 0 }
+                                        ]}
+                                    >
+                                        <Text style={[
+                                            styles.numBtnText,
+                                            { color: primStr },
+                                            d === '⌫' && { fontSize: 28 }
+                                        ]}>
+                                            {d}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        )}
+                    </View>
                 </View>
 
-                {/* Error */}
-                {error ? (
-                    <View style={styles.errorBox}>
-                        <Text style={styles.errorText}>{error}</Text>
-                    </View>
-                ) : null}
-
-                {/* Numpad */}
-                {loading ? (
-                    <View style={{ height: 350, justifyContent: 'center', alignItems: 'center' }}>
-                        <ActivityIndicator size="large" color={primStr} />
-                    </View>
-                ) : (
-                    <View style={styles.numpad}>
-                        {DIGITS.map((d, idx) => (
-                            <TouchableOpacity
-                                key={idx}
-                                disabled={d === ''}
-                                onPress={() => pressDigit(d)}
-                                style={[
-                                    styles.numBtn,
-                                    d === '' && { backgroundColor: 'transparent', borderWidth: 0 }
-                                ]}
-                            >
-                                <Text style={[
-                                    styles.numBtnText,
-                                    { color: primStr },
-                                    d === '⌫' && { fontSize: 28 }
-                                ]}>
-                                    {d}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                )}
-
-                {/* Time Clock mode toggle */}
-                <TouchableOpacity
-                    onPress={() => {
-                        setTimeClockMode(!timeClockMode);
-                        setError('');
-                        setPin('');
-                    }}
-                    style={[styles.modeBtn, { borderColor: primStr }]}
-                >
-                    <Text style={[styles.modeBtnText, { color: primStr }]}>
-                        {timeClockMode 
-                            ? (language === 'es' ? '← Iniciar Sesión POS' : '← POS Order Login')
-                            : `⏰ ${language === 'es' ? 'Reloj de Marcación' : 'Time Clock'}`}
-                    </Text>
-                </TouchableOpacity>
-
-                {/* Time Clock Modal */}
                 {showClockModal && clockUser && (
                     <TimeClockModal
                         visible={showClockModal}
@@ -328,7 +343,7 @@ export default function PinLoginScreen({ onLogin }: Props) {
                         }
                     />
                 )}
-            </View>
+            </ScrollView>
         </SafeAreaView>
     );
 }
@@ -336,8 +351,13 @@ export default function PinLoginScreen({ onLogin }: Props) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        alignItems: 'center',
         justifyContent: 'center',
+    },
+    scrollContent: {
+        flexGrow: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: 20,
     },
     card: {
         width: 360,
