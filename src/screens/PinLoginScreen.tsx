@@ -251,7 +251,7 @@ export default function PinLoginScreen({ onLogin }: Props) {
                         </Text>
 
                         {tenantName ? (
-                            <View style={{ alignItems: 'center', marginBottom: 20 }}>
+                            <View style={{ alignItems: 'center', marginBottom: 16 }}>
                                 <Text style={{ fontSize: 13, color: '#6b7280', fontWeight: 'bold', textAlign: 'center' }}>
                                     {language === 'es' ? `Conectado a: ${tenantName}` : `Connected to: ${tenantName}`}
                                 </Text>
@@ -263,61 +263,86 @@ export default function PinLoginScreen({ onLogin }: Props) {
                             </View>
                         ) : null}
 
-                        <TouchableOpacity
-                            onPress={() => {
-                                setTimeClockMode(!timeClockMode);
-                                setError('');
-                                setPin('');
-                            }}
-                            style={[styles.modeBtn, { borderColor: primStr }]}
-                        >
-                            <Text style={[styles.modeBtnText, { color: primStr }]}>
-                                {timeClockMode 
-                                    ? (language === 'es' ? '← Iniciar Sesión POS' : '← POS Order Login')
-                                    : `⏰ ${language === 'es' ? 'Reloj de Marcación' : 'Time Clock'}`}
-                            </Text>
-                        </TouchableOpacity>
+                        {/* Mode Button in Landscape */}
+                        {isLandscape && (
+                            <TouchableOpacity
+                                onPress={() => {
+                                    setTimeClockMode(!timeClockMode);
+                                    setError('');
+                                    setPin('');
+                                }}
+                                style={[styles.modeBtn, { borderColor: primStr }]}
+                            >
+                                <Text style={[styles.modeBtnText, { color: primStr }]}>
+                                    {timeClockMode 
+                                        ? (language === 'es' ? '← Iniciar Sesión POS' : '← POS Order Login')
+                                        : `⏰ ${language === 'es' ? 'Reloj de Marcación' : 'Time Clock'}`}
+                                </Text>
+                            </TouchableOpacity>
+                        )}
                     </View>
 
-                    <View style={[isLandscape && { flex: 1, alignItems: 'center' }]}>
+                    <View style={[{ alignItems: 'center' }, isLandscape && { flex: 1 }]}>
+                        {/* PIN dots */}
                         <View style={styles.dotsRow}>
                             {dots.map((d, i) => (
                                 <View key={i} style={[styles.dot, { borderColor: primStr }, d.filled && { backgroundColor: primStr }]} />
                             ))}
                         </View>
 
+                        {/* Error */}
                         {error ? (
                             <View style={{ marginBottom: 16 }}>
                                 <Text style={styles.errorText}>{error}</Text>
                             </View>
                         ) : null}
 
+                        {/* Numpad */}
                         {loading ? (
                             <View style={{ height: 280, justifyContent: 'center', alignItems: 'center' }}>
                                 <ActivityIndicator size="large" color={primStr} />
                             </View>
                         ) : (
                             <View style={styles.numpad}>
-                                {DIGITS.map((d, idx) => (
-                                    <TouchableOpacity
-                                        key={idx}
-                                        disabled={d === ''}
-                                        onPress={() => pressDigit(d)}
-                                        style={[
-                                            styles.numBtn,
-                                            d === '' && { backgroundColor: 'transparent', borderWidth: 0 }
-                                        ]}
-                                    >
-                                        <Text style={[
-                                            styles.numBtnText,
-                                            { color: primStr },
-                                            d === '⌫' && { fontSize: 28 }
-                                        ]}>
-                                            {d}
-                                        </Text>
-                                    </TouchableOpacity>
-                                ))}
+                                {DIGITS.map((d, idx) => {
+                                    if (d === '') {
+                                        return <View key={idx} style={{ width: 76, height: 76 }} />;
+                                    }
+                                    return (
+                                        <TouchableOpacity
+                                            key={idx}
+                                            onPress={() => pressDigit(d)}
+                                            style={styles.numBtn}
+                                        >
+                                            <Text style={[
+                                                styles.numBtnText,
+                                                { color: primStr },
+                                                d === '⌫' && { fontSize: 28 }
+                                            ]}>
+                                                {d}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
                             </View>
+                        )}
+
+                        {/* Mode Button in Portrait */}
+                        {!isLandscape && (
+                            <TouchableOpacity
+                                onPress={() => {
+                                    setTimeClockMode(!timeClockMode);
+                                    setError('');
+                                    setPin('');
+                                }}
+                                style={[styles.modeBtn, { borderColor: primStr, marginTop: 24 }]}
+                            >
+                                <Text style={[styles.modeBtnText, { color: primStr }]}>
+                                    {timeClockMode 
+                                        ? (language === 'es' ? '← Iniciar Sesión POS' : '← POS Order Login')
+                                        : `⏰ ${language === 'es' ? 'Reloj de Marcación' : 'Time Clock'}`}
+                                </Text>
+                            </TouchableOpacity>
                         )}
                     </View>
                 </View>

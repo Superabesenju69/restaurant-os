@@ -1,7 +1,7 @@
 import "./global.css";
 import React, { useEffect, useState } from "react";
 import { StatusBar } from 'expo-status-bar';
-import { View, Text, TouchableOpacity, ScrollView, TextInput, KeyboardAvoidingView, Platform, SafeAreaView, ActivityIndicator, Image, FlatList, Alert, useWindowDimensions } from "react-native";
+import { View, Text, TouchableOpacity, ScrollView, TextInput, KeyboardAvoidingView, Platform, SafeAreaView, ActivityIndicator, Image, FlatList, Alert, useWindowDimensions, StatusBar as RNStatusBar } from "react-native";
 import type { GestureResponderEvent } from "react-native";
 import type { MenuItem, ItemOption, ItemOptionChoice, Recipe, CartItem, CartItemIngredient, Payment, Category, FloorTable } from "./src/types";
 import { usePosStore } from "./src/store/posStore";
@@ -52,7 +52,9 @@ function MainApp() {
   const bgStr = themeBgs[themeColor] || themeBgs.teal;
   const tp = themePalette[themeColor] || themePalette.teal;
 
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+  const isTablet = width >= 768 || height >= 768;
   const isMobile = width < 768;
   const [isFooterExpanded, setIsFooterExpanded] = useState(false);
 
@@ -289,7 +291,7 @@ function MainApp() {
         </TouchableOpacity>
       </SafeAreaView>
     )}>
-      <SafeAreaView className="flex-1" style={{ backgroundColor: bgStr }}>
+      <SafeAreaView className="flex-1" style={{ backgroundColor: bgStr, paddingTop: Platform.OS === 'android' ? (RNStatusBar.currentHeight || 28) : 0 }}>
         <StatusBar style="dark" />
 
         <View className="flex-1 flex-col md:flex-row">
@@ -1190,13 +1192,13 @@ function MainApp() {
       {/* Checkout Split Payment Modal */}
       {showCheckoutModal && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, elevation: 120, zIndex: 120 }}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' }}>
-            <View style={{ backgroundColor: 'white', borderRadius: 24, padding: 32, width: '90%', maxWidth: 800, height: 650, maxHeight: '90%', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 30, shadowOffset: { width: 0, height: 10 } }}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
+            <View style={{ backgroundColor: 'white', borderRadius: 24, padding: (isLandscape || isTablet) ? 32 : 20, width: '100%', maxWidth: 800, maxHeight: '92%', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 30, shadowOffset: { width: 0, height: 10 } }}>
 
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#f3f4f6', paddingBottom: 16, marginBottom: 24 }}>
-                <Text style={{ fontSize: 28, fontWeight: '900', color: '#111827' }}>{t('pos.checkout.title', language)}</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#f3f4f6', paddingBottom: 16, marginBottom: 20 }}>
+                <Text style={{ fontSize: 24, fontWeight: '900', color: '#111827' }}>{t('pos.checkout.title', language)}</Text>
                 <TouchableOpacity onPress={() => setShowCheckoutModal(false)} style={{ backgroundColor: '#f3f4f6', padding: 10, borderRadius: 12 }}>
-                  <Text style={{ fontWeight: 'black', color: '#374151', fontSize: 18 }}>✕</Text>
+                  <Text style={{ fontWeight: 'bold', color: '#374151', fontSize: 18 }}>✕</Text>
                 </TouchableOpacity>
               </View>
 
@@ -1243,15 +1245,16 @@ function MainApp() {
                 };
 
                 return (
-                  <View style={{ flex: 1, flexDirection: 'row', gap: 32 }}>
+                  <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
+                    <View style={{ flex: 1, flexDirection: (isLandscape || isTablet) ? 'row' : 'column', gap: (isLandscape || isTablet) ? 32 : 20 }}>
 
-                    {/* Left: Balances & Payment Entry */}
-                    <View style={{ flex: 1, borderRightWidth: 1, borderRightColor: '#f3f4f6', paddingRight: 32 }}>
+                      {/* Left: Balances & Payment Entry */}
+                      <View style={{ flex: (isLandscape || isTablet) ? 1 : undefined, borderRightWidth: (isLandscape || isTablet) ? 1 : 0, borderRightColor: '#f3f4f6', paddingRight: (isLandscape || isTablet) ? 32 : 0, borderBottomWidth: (!isLandscape && !isTablet) ? 1 : 0, borderBottomColor: '#f3f4f6', paddingBottom: (!isLandscape && !isTablet) ? 20 : 0 }}>
 
-                      {/* Visual Balance Card */}
-                      <View style={{ backgroundColor: isFullyPaid ? '#f0fdf4' : tp[50], padding: 24, borderRadius: 20, marginBottom: 24, borderWidth: 1, borderColor: isFullyPaid ? '#bbf7d0' : tp[200] }}>
-                        <Text style={{ fontSize: 16, color: isFullyPaid ? '#166534' : tp[700], fontWeight: '700', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>{t('pos.checkout.remaining', language)}</Text>
-                        <Text style={{ fontSize: 48, fontWeight: '900', color: isFullyPaid ? '#15803d' : tp[900], letterSpacing: -1 }}>{formatCurrency(remaining, currency)}</Text>
+                        {/* Visual Balance Card */}
+                        <View style={{ backgroundColor: isFullyPaid ? '#f0fdf4' : tp[50], padding: 20, borderRadius: 20, marginBottom: 20, borderWidth: 1, borderColor: isFullyPaid ? '#bbf7d0' : tp[200] }}>
+                          <Text style={{ fontSize: 14, color: isFullyPaid ? '#166534' : tp[700], fontWeight: '700', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>{t('pos.checkout.remaining', language)}</Text>
+                          <Text style={{ fontSize: 40, fontWeight: '900', color: isFullyPaid ? '#15803d' : tp[900], letterSpacing: -1 }}>{formatCurrency(remaining, currency)}</Text>
 
                         {/* Progress Bar */}
                         <View style={{ height: 8, backgroundColor: isFullyPaid ? '#bbf7d0' : tp[200], borderRadius: 4, marginTop: 16, overflow: 'hidden' }}>
@@ -1440,7 +1443,7 @@ function MainApp() {
                     </View>
 
                     {/* Right: Applied Payments & Action */}
-                    <View style={{ width: 280, justifyContent: 'space-between' }}>
+                    <View style={{ width: (isLandscape || isTablet) ? 280 : '100%', justifyContent: 'space-between', marginTop: (!isLandscape && !isTablet) ? 16 : 0 }}>
                       <View style={{ flex: 1 }}>
                         <Text style={{ fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 16 }}>{t('pos.checkout.applied_payments', language)}</Text>
 
@@ -1449,7 +1452,7 @@ function MainApp() {
                             <Text style={{ color: '#9ca3af', fontWeight: '600' }}>{t('pos.checkout.no_payments', language)}</Text>
                           </View>
                         ) : (
-                          <ScrollView showsVerticalScrollIndicator={false}>
+                          <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 200 }}>
                             {currentPayments.map((p, idx) => (
                               <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#f8fafc', padding: 16, borderRadius: 12, marginBottom: 8, borderWidth: 1, borderColor: '#e2e8f0' }}>
                                 <View>
@@ -1519,6 +1522,7 @@ function MainApp() {
 
                     </View>
                   </View>
+                </ScrollView>
                 );
               })()}
 
