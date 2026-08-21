@@ -451,7 +451,20 @@ export const usePosStore = create<PosState>((set, get) => ({
         await AsyncStorage.removeItem('pos_tenant_name');
         await AsyncStorage.removeItem('pos_tenant_subdomain');
         setTenantIdHeader('');
-        set({ tenantId: null, tenantName: null, tenantSubdomain: null, currentPosUser: null });
+        set({
+            tenantId: null,
+            tenantName: null,
+            tenantSubdomain: null,
+            currentPosUser: null,
+            categories: [],
+            items: [],
+            allIngredients: [],
+            itemCategoryLinks: [],
+            tables: [],
+            ordersList: [],
+            activeOrderId: null,
+            cart: []
+        });
     },
 
     posLogin: (user) => {
@@ -835,7 +848,8 @@ export const usePosStore = create<PosState>((set, get) => ({
             }
         };
 
-        const tenantId = get().tenantId || '7488df63-4fa8-4444-9c59-b1d5565f121d';
+        const tenantId = get().tenantId;
+        if (!tenantId) return;
         const filterStr = `tenant_id=eq.${tenantId}`;
 
         const channel = supabase.channel('pos-sync')
@@ -947,8 +961,17 @@ export const usePosStore = create<PosState>((set, get) => ({
             .select('*, child_item:items!child_item_id(*)')
             .eq('parent_item_id', product.id);
 
-        const sizeKey = Object.keys(selectedOptions).find(k => k.toLowerCase() === 'size' || k.toLowerCase() === 'tamaño');
-        const selectedSize = sizeKey ? selectedOptions[sizeKey] : null;
+        const sizeKey = Object.keys(selectedOptions).find(k => 
+            k.toLowerCase().includes('size') || 
+            k.toLowerCase().includes('tamaño') || 
+            k.toLowerCase().includes('porcion') || 
+            k.toLowerCase().includes('porción')
+        );
+        let selectedSize = sizeKey ? selectedOptions[sizeKey] : null;
+        if (!selectedSize) {
+            const matchingVal = Object.values(selectedOptions).find(val => (recipeData || []).some((r: any) => r.size_name && r.size_name.toLowerCase() === String(val).toLowerCase()));
+            if (matchingVal) selectedSize = String(matchingVal);
+        }
         const normalizedSelectedSize = selectedSize ? selectedSize.toLowerCase() : null;
 
         let filteredRecipeData = (recipeData || []).filter((r: any) => (r.size_name ? r.size_name.toLowerCase() : null) === normalizedSelectedSize);
@@ -1309,8 +1332,17 @@ export const usePosStore = create<PosState>((set, get) => ({
         if (sub_cart_id && newCi.sub_items) {
             newCi.sub_items = newCi.sub_items.map((sub: any) => {
                 if (sub.cart_id === sub_cart_id) {
-                    const subSizeKey = Object.keys(options).find(k => k.toLowerCase() === 'size' || k.toLowerCase() === 'tamaño');
-                    const subSize = subSizeKey ? options[subSizeKey] : null;
+                    const subSizeKey = Object.keys(options).find(k => 
+                        k.toLowerCase().includes('size') || 
+                        k.toLowerCase().includes('tamaño') || 
+                        k.toLowerCase().includes('porcion') || 
+                        k.toLowerCase().includes('porción')
+                    );
+                    let subSize = subSizeKey ? options[subSizeKey] : null;
+                    if (!subSize) {
+                        const matchingVal = Object.values(options).find(val => state.recipes.some((r: any) => r.parent_item_id === sub.item.id && r.size_name && r.size_name.toLowerCase() === String(val).toLowerCase()));
+                        if (matchingVal) subSize = String(matchingVal);
+                    }
                     sub.selectedOptions = options;
                     sub.ingredients = getNewIngredients(sub.item.id, subSize, sub.ingredients);
                 }
@@ -1318,8 +1350,17 @@ export const usePosStore = create<PosState>((set, get) => ({
             });
         } else {
             newCi.selectedOptions = options;
-            const sizeKey = Object.keys(options).find(k => k.toLowerCase() === 'size' || k.toLowerCase() === 'tamaño');
-            const selectedSize = sizeKey ? options[sizeKey] : null;
+            const sizeKey = Object.keys(options).find(k => 
+                k.toLowerCase().includes('size') || 
+                k.toLowerCase().includes('tamaño') || 
+                k.toLowerCase().includes('porcion') || 
+                k.toLowerCase().includes('porción')
+            );
+            let selectedSize = sizeKey ? options[sizeKey] : null;
+            if (!selectedSize) {
+                const matchingVal = Object.values(options).find(val => state.recipes.some((r: any) => r.parent_item_id === newCi.item.id && r.size_name && r.size_name.toLowerCase() === String(val).toLowerCase()));
+                if (matchingVal) selectedSize = String(matchingVal);
+            }
 
             if (newCi.item.type === 'combo') {
                 newCi.sub_items = newCi.sub_items?.map((sub: any) => {

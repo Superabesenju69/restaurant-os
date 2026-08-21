@@ -15,11 +15,20 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 });
 
 export function setTenantIdHeader(tenantId: string) {
+    const client = supabase as any;
+    if (!client || !client.rest || !client.rest.headers) return;
     if (tenantId) {
-        // @ts-ignore
-        supabase.rest.headers['x-tenant-id'] = tenantId;
+        if (typeof client.rest.headers.set === 'function') {
+            client.rest.headers.set('x-tenant-id', tenantId);
+        } else {
+            client.rest.headers['x-tenant-id'] = tenantId;
+        }
     } else {
-        // @ts-ignore
-        delete supabase.rest.headers['x-tenant-id'];
+        if (typeof client.rest.headers.delete === 'function') {
+            client.rest.headers.delete('x-tenant-id');
+        } else {
+            delete client.rest.headers['x-tenant-id'];
+        }
     }
 }
+

@@ -10,22 +10,10 @@ import type { CartItem, CartItemIngredient, MenuItem, Recipe, ItemOptionChoice }
 
 /**
  * Calculate the combined ingredient multiplier for a cart item based on its selected options.
- * Only options with `affects_ingredients: true` contribute to the multiplier.
- * Multiple multipliers are multiplied together (e.g. Large 1.5x × Thick Crust 1.2x = 1.8x).
+ * @deprecated Sizes now have dedicated exact recipes. Retained for backward compatibility returning 1.
  */
-export function getIngredientMultiplier(item: MenuItem, selectedOptions?: Record<string, string>): number {
-    if (!selectedOptions || !item?.options) return 1;
-    let combined = 1;
-    for (const opt of (item.options || [])) {
-        if (!opt.affects_ingredients) continue;
-        const selectedChoiceName = selectedOptions[opt.name];
-        if (!selectedChoiceName) continue;
-        const choiceDef = (opt.choices || []).find((c: ItemOptionChoice) => c.name === selectedChoiceName);
-        if (choiceDef && choiceDef.ingredient_multiplier != null) {
-            combined *= choiceDef.ingredient_multiplier;
-        }
-    }
-    return combined;
+export function getIngredientMultiplier(_item: MenuItem, _selectedOptions?: Record<string, string>): number {
+    return 1;
 }
 
 /**
@@ -94,27 +82,24 @@ async function applyStockChanges(
 
 /**
  * Build a map of { ingredientId → totalQuantity } for all ingredients in a cart item.
- * Handles both main-item and combo sub-item ingredients with multipliers.
+ * Uses exact recipe quantities defined for the selected size without artificial multipliers.
  */
 function buildDeductionMap(cartItem: CartItem, multiplier: number): Record<string, number> {
     const deductions: Record<string, number> = {};
 
-    const mainMultiplier = getIngredientMultiplier(cartItem.item, cartItem.selectedOptions);
-
     // Main item ingredients (non-removed)
     for (const ing of cartItem.ingredients) {
         if (!ing.removed) {
-            const qty = (ing.extra ? 1 : ing.recipe_quantity * mainMultiplier) * multiplier;
+            const qty = (ing.extra ? 1 : (ing.recipe_quantity || 1)) * multiplier;
             deductions[ing.id] = (deductions[ing.id] || 0) + qty;
         }
     }
 
     // Combo sub-item ingredients
     for (const sub of (cartItem.sub_items || [])) {
-        const subMultiplier = getIngredientMultiplier(sub.item, sub.selectedOptions);
         for (const ing of sub.ingredients) {
             if (!ing.removed) {
-                const qty = (ing.extra ? 1 : ing.recipe_quantity * subMultiplier) * sub.quantity * multiplier;
+                const qty = (ing.extra ? 1 : (ing.recipe_quantity || 1)) * sub.quantity * multiplier;
                 deductions[ing.id] = (deductions[ing.id] || 0) + qty;
             }
         }
