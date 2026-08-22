@@ -16,6 +16,10 @@ const CMD_TEXT_NORMAL = '\x1B\x21\x00'; // Normal text
 const CMD_TEXT_DOUBLE_HEIGHT = '\x1B\x21\x10'; // Double height
 const CMD_TEXT_DOUBLE_WIDTH = '\x1B\x21\x20'; // Double width
 const CMD_TEXT_TITLE = '\x1B\x21\x30'; // Double height + width
+const CMD_FONT_A = '\x1B\x4D\x00'; // Standard font (12x24)
+const CMD_FONT_B = '\x1B\x4D\x01'; // Condensed font (9x17)
+const CMD_BOLD_ON = '\x1B\x45\x01'; // Bold text ON
+const CMD_BOLD_OFF = '\x1B\x45\x00'; // Bold text OFF
 const CMD_CUT = '\x1D\x56\x41\x10'; // Partial cut and feed
 const NL = '\n';
 
@@ -45,31 +49,46 @@ export const buildReceiptBuffer = (job: PrintJob): Buffer => {
     const template = job.receiptTemplate;
     const isNarrow = template?.paper_width === '58mm';
     const lineLength = isNarrow ? 30 : 42;
-    const divider = '-'.repeat(lineLength);
+
+    const dividerChar = template?.divider_style === 'equals' ? '=' 
+        : template?.divider_style === 'dots' ? '.' 
+        : template?.divider_style === 'stars' ? '*' 
+        : '-';
+    const divider = dividerChar.repeat(lineLength);
+
     const alignCmd = template?.alignment === 'left' ? CMD_ALIGN_LEFT : CMD_ALIGN_CENTER;
+    const fontCmd = template?.font_family === 'condensed' ? CMD_FONT_B : CMD_FONT_A;
 
     commands += CMD_INIT;
+    commands += fontCmd;
 
     // Header
     if (job.isCustomerReceipt) {
         commands += alignCmd;
         
-        // Custom Logo Placeholder
+        // Custom Logo Placeholder with size spacing
         if (template?.logo_url && template.logo_url.trim()) {
-            commands += `[ 🍽️ ]${NL}${NL}`;
+            const logoSpacing = template.logo_size === 'xlarge' ? `${NL}${NL}${NL}` : template.logo_size === 'large' ? `${NL}${NL}` : `${NL}`;
+            commands += `[ 🍽️ ]${logoSpacing}`;
         }
 
         // Custom Header Lines
         if (template?.header_lines && template.header_lines.length > 0) {
             template.header_lines.forEach((line: string, idx: number) => {
                 if (idx === 0) {
-                    commands += CMD_TEXT_TITLE + line.toUpperCase() + NL + CMD_TEXT_NORMAL;
+                    if (template.header_format === 'bold_uppercase') {
+                        commands += CMD_TEXT_TITLE + line.toUpperCase() + NL + CMD_TEXT_NORMAL + fontCmd;
+                    } else if (template.header_format === 'bold') {
+                        commands += CMD_BOLD_ON + line + CMD_BOLD_OFF + NL;
+                    } else {
+                        commands += line + NL;
+                    }
                 } else {
                     commands += line + NL;
                 }
             });
         } else {
-            commands += CMD_TEXT_TITLE + `RECEIPT${NL}` + CMD_TEXT_NORMAL;
+            commands += CMD_TEXT_TITLE + `RECEIPT${NL}` + CMD_TEXT_NORMAL + fontCmd;
         }
     } else {
         commands += CMD_ALIGN_CENTER;

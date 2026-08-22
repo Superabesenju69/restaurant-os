@@ -402,6 +402,7 @@ export const usePosStore = create<PosState>((set, get) => ({
     setThemeColor: (color) => set({ themeColor: color }),
     receiptTemplate: {
         logo_url: '',
+        logo_size: 'medium',
         header_lines: [
             "EL GAUCHO STEAKHOUSE",
             "KM 4.5 Carretera Masaya",
@@ -418,7 +419,12 @@ export const usePosStore = create<PosState>((set, get) => ({
         show_tax_breakdown: true,
         show_promotion_discounts: true,
         alignment: 'center',
-        paper_width: '80mm'
+        paper_width: '80mm',
+        font_family: 'classic',
+        font_size: 'normal',
+        header_format: 'bold_uppercase',
+        divider_style: 'dashes',
+        line_spacing: 'normal'
     },
     setLanguage: async (lang) => {
         await AsyncStorage.setItem('pos_language', lang);
