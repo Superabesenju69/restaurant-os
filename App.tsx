@@ -19,6 +19,7 @@ import Toast from 'react-native-toast-message';
 import { t } from './src/utils/i18n';
 import { formatCurrency, CURRENCIES } from './src/utils/currency';
 import { resolveCombinationPrice } from './src/utils/recipeUtils';
+import { calculateVariationMaxStock, canIncrementCartItem } from './src/services/inventoryService';
 import { checkForUpdates } from "./src/utils/updateChecker";
 
 function MainApp() {
@@ -355,20 +356,24 @@ function MainApp() {
                   <Text className="text-gray-400 text-xs md:text-sm mt-1 md:mt-2 text-center px-4">{t('pos.main.empty_cart_hint', language)}</Text>
                 </View>
               }
-              renderItem={({ item: cartItem }: { item: CartItem }) => (
-                <CartItemRow
-                  cartItem={cartItem}
-                  isInspecting={inspectingCartItemId === cartItem.cart_id}
-                  tp={tp}
-                  language={language}
-                  currency={currency}
-                  getCartItemPrice={getCartItemPrice}
-                  onPress={() => requestAnimationFrame(() => setInspectingCartItemId(cartItem.cart_id))}
-                  onIncrement={() => incrementCartItemQuantity(cartItem.cart_id)}
-                  onDecrement={() => decrementCartItemQuantity(cartItem.cart_id)}
-                  onRemove={() => removeFromCart(cartItem.cart_id)}
-                />
-              )}
+              renderItem={({ item: cartItem }: { item: CartItem }) => {
+                const stockCheck = canIncrementCartItem(cartItem, allIngredients, items, 1);
+                return (
+                  <CartItemRow
+                    cartItem={cartItem}
+                    isInspecting={inspectingCartItemId === cartItem.cart_id}
+                    tp={tp}
+                    language={language}
+                    currency={currency}
+                    canIncrement={stockCheck.canIncrement}
+                    getCartItemPrice={getCartItemPrice}
+                    onPress={() => requestAnimationFrame(() => setInspectingCartItemId(cartItem.cart_id))}
+                    onIncrement={() => incrementCartItemQuantity(cartItem.cart_id)}
+                    onDecrement={() => decrementCartItemQuantity(cartItem.cart_id)}
+                    onRemove={() => removeFromCart(cartItem.cart_id)}
+                  />
+                );
+              }}
             />
 
             <View className="p-3 md:p-6 border-t border-gray-100 bg-gray-50">
@@ -869,115 +874,270 @@ function MainApp() {
         </View>
       </SafeAreaView>
 
-      {/* Quantity Picker Modal — shown when tapping a menu item */}
+      {/* Variation & Quantity Picker Modal — shown when tapping a menu item */}
       {!!qtyPickerItem && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, elevation: 100, zIndex: 100 }}>
           <TouchableOpacity
             activeOpacity={1}
             onPress={() => setQtyPickerItem(null)}
-            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' }}
+            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 16 }}
           >
-            <TouchableOpacity activeOpacity={1} onPress={e => e.stopPropagation()}
-              style={{ backgroundColor: 'white', borderRadius: 24, padding: 28, width: 320, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 20 }}>
-              {qtyPickerItem && (
-                <>
-                  <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: qtyPickerItem.type === 'combo' ? '#ede9fe' : tp[100], alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
-                    <Text style={{ fontSize: 22, fontWeight: '900', color: qtyPickerItem.type === 'combo' ? '#7c3aed' : tp[600] }}>{qtyPickerItem.name.charAt(0)}</Text>
-                  </View>
-                  <Text style={{ fontSize: 20, fontWeight: '800', color: '#111827', marginBottom: 4, textAlign: 'center' }}>{qtyPickerItem.name}</Text>
-                  <Text style={{ fontSize: 18, fontWeight: '900', color: tp[600], marginBottom: 24 }}>{formatCurrency(qtyPickerItem.base_price, currency)} {t('pos.main.each', language)}</Text>
-                  {(() => {
-                    let maxAvailableQty = Infinity;
-                    if (qtyPickerItem.track_inventory) {
-                      maxAvailableQty = Math.min(maxAvailableQty, qtyPickerItem.stock_level ?? 0);
-                    }
-                    const itemRecipes = recipes.filter((r: Recipe) => r.parent_item_id === qtyPickerItem.id);
-                    for (const r of itemRecipes) {
-                      const ing = allIngredients.find((i: MenuItem) => i.id === r.child_item_id);
-                      if (ing && ing.track_inventory) {
-                        const maxFromIng = Math.floor((ing.stock_level ?? 0) / (r.quantity || 1));
-                        maxAvailableQty = Math.min(maxAvailableQty, maxFromIng);
-                      }
-                    }
-                    if (qtyPickerItem.type === 'combo') {
-                      for (const r of itemRecipes) {
-                        const subProduct = items.find((i: MenuItem) => i.id === r.child_item_id);
-                        if (subProduct) {
-                          if (subProduct.track_inventory) {
-                            maxAvailableQty = Math.min(maxAvailableQty, Math.floor((subProduct.stock_level ?? 0) / (r.quantity || 1)));
-                          }
-                          const subRecipes = recipes.filter((sr: Recipe) => sr.parent_item_id === subProduct.id);
-                          for (const sr of subRecipes) {
-                            const subIng = allIngredients.find((i: MenuItem) => i.id === sr.child_item_id);
-                            if (subIng && subIng.track_inventory) {
-                              const totalNeeded = sr.quantity * (r.quantity || 1);
-                              const maxFromSubIng = Math.floor((subIng.stock_level ?? 0) / totalNeeded);
-                              maxAvailableQty = Math.min(maxAvailableQty, maxFromSubIng);
-                            }
-                          }
-                        }
-                      }
-                    }
-                    if (!isFinite(maxAvailableQty)) maxAvailableQty = 999;
-                    const atMax = qtyPickerCount >= maxAvailableQty;
+            <TouchableOpacity
+              activeOpacity={1}
+              onPress={e => e.stopPropagation()}
+              style={{
+                backgroundColor: 'white',
+                borderRadius: 24,
+                padding: 24,
+                width: '100%',
+                maxWidth: 440,
+                maxHeight: '90%',
+                shadowColor: '#000',
+                shadowOpacity: 0.2,
+                shadowRadius: 25,
+                elevation: 10
+              }}
+            >
+              {qtyPickerItem && (() => {
+                const tipoKey = Object.keys(qtyPickerOptions).find(k => k.toLowerCase() === 'tipo' || k.toLowerCase().includes('tipo'));
+                const selectedTipo = tipoKey ? qtyPickerOptions[tipoKey] : null;
 
-                    return (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20, marginBottom: 28 }}>
-                        <TouchableOpacity
-                          onPress={() => setQtyPickerCount((q: number) => Math.max(1, q - 1))}
-                          style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: qtyPickerCount > 1 ? '#fee2e2' : '#f3f4f6', borderWidth: 1, borderColor: qtyPickerCount > 1 ? '#fca5a5' : '#e5e7eb', alignItems: 'center', justifyContent: 'center' }}
-                        >
-                          <Text style={{ fontSize: 24, fontWeight: '900', color: qtyPickerCount > 1 ? '#dc2626' : '#9ca3af' }}>−</Text>
-                        </TouchableOpacity>
-                        <View style={{ width: 56, height: 44, backgroundColor: '#f3f4f6', borderRadius: 12, alignItems: 'center', justifyContent: 'center' }}>
-                          <Text style={{ fontSize: 24, fontWeight: '900', color: '#111827' }}>{qtyPickerCount}</Text>
+                const sizeKey = Object.keys(qtyPickerOptions).find(k => 
+                  k.toLowerCase().includes('size') || 
+                  k.toLowerCase().includes('tamaño') || 
+                  k.toLowerCase().includes('tamano') || 
+                  k.toLowerCase().includes('porcion') || 
+                  k.toLowerCase().includes('porción')
+                );
+                const selectedSize = sizeKey ? qtyPickerOptions[sizeKey] : null;
+
+                const basePriceResolved = resolveCombinationPrice(
+                  qtyPickerItem.combination_prices,
+                  qtyPickerItem.base_price,
+                  selectedTipo,
+                  selectedSize
+                );
+
+                const extraOptionsSum = Object.entries(qtyPickerOptions).reduce((sum, [optName, choiceName]) => {
+                  const isTipoOrSize = optName.toLowerCase().includes('tipo') || optName.toLowerCase().includes('tamaño') || optName.toLowerCase().includes('tamano') || optName.toLowerCase().includes('size');
+                  if (isTipoOrSize && qtyPickerItem.combination_prices) {
+                    return sum;
+                  }
+                  const optDef = (qtyPickerItem.options || []).find((o: ItemOption) => o.name === optName);
+                  if (!optDef) return sum;
+                  const choiceDef = (optDef.choices || []).find((c: ItemOptionChoice) => (typeof c === 'object' ? c.name : c) === choiceName);
+                  return sum + (typeof choiceDef === 'object' && choiceDef.price_modifier ? choiceDef.price_modifier : 0);
+                }, 0);
+
+                const unitPrice = basePriceResolved + extraOptionsSum;
+
+                const { maxQty, limitingItemName } = calculateVariationMaxStock(
+                  qtyPickerItem,
+                  selectedTipo,
+                  selectedSize,
+                  allIngredients,
+                  recipes,
+                  items
+                );
+
+                const isOutOfStock = maxQty <= 0;
+                const effectiveCount = isOutOfStock ? 0 : Math.min(qtyPickerCount, maxQty);
+                const atMax = isOutOfStock || qtyPickerCount >= maxQty;
+
+                return (
+                  <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ alignItems: 'center' }}>
+                    {/* Header */}
+                    <View style={{ width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, paddingRight: 8 }}>
+                        <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: qtyPickerItem.type === 'combo' ? '#ede9fe' : tp[100], alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ fontSize: 18, fontWeight: '900', color: qtyPickerItem.type === 'combo' ? '#7c3aed' : tp[600] }}>{qtyPickerItem.name.charAt(0)}</Text>
                         </View>
-                        <TouchableOpacity
-                          onPress={() => setQtyPickerCount((q: number) => Math.min(maxAvailableQty, q + 1))}
-                          disabled={atMax}
-                          style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: atMax ? '#f3f4f6' : tp[100], borderWidth: 1, borderColor: atMax ? '#e5e7eb' : tp[300], alignItems: 'center', justifyContent: 'center', opacity: atMax ? 0.5 : 1 }}
-                        >
-                          <Text style={{ fontSize: 24, fontWeight: '900', color: atMax ? '#9ca3af' : tp[600] }}>+</Text>
-                        </TouchableOpacity>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 18, fontWeight: '800', color: '#111827' }} numberOfLines={1}>{qtyPickerItem.name}</Text>
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: '#6b7280' }}>
+                            {formatCurrency(unitPrice, currency)} {t('pos.main.each', language)}
+                          </Text>
+                        </View>
                       </View>
-                    );
-                  })()}
-                  <Text style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>
-                    {t('pos.main.subtotal', language)} <Text style={{ fontWeight: '800', color: '#111827' }}>
-                      {formatCurrency(qtyPickerCount * (qtyPickerItem.base_price + Object.entries(qtyPickerOptions).reduce((sum, [optName, choiceName]) => {
-                        const optDef = (qtyPickerItem.options || []).find((o: ItemOption) => o.name === optName);
-                        if (!optDef) return sum;
-                        const choiceDef = (optDef.choices || []).find((c: ItemOptionChoice) => (typeof c === 'object' ? c.name : c) === choiceName);
-                        return sum + (typeof choiceDef === 'object' && choiceDef.price_modifier ? choiceDef.price_modifier : 0);
-                      }, 0)), currency)}
+                      <TouchableOpacity
+                        onPress={() => setQtyPickerItem(null)}
+                        style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#f3f4f6', alignItems: 'center', justifyContent: 'center' }}
+                      >
+                        <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#4b5563' }}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Options (Tipo, Tamaño, etc.) */}
+                    {qtyPickerItem.options && qtyPickerItem.options.length > 0 && (
+                      <View style={{ width: '100%', marginBottom: 16 }}>
+                        {qtyPickerItem.options.map((opt: ItemOption) => {
+                          const isSizeOpt = opt.name.toLowerCase() === 'tamaño' || opt.name.toLowerCase() === 'tamano' || opt.name.toLowerCase() === 'size';
+                          const isTipoOpt = opt.name.toLowerCase() === 'tipo';
+
+                          return (
+                            <View key={opt.name} style={{ marginBottom: 14 }}>
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+                                {opt.name}
+                              </Text>
+                              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                                {(opt.choices || []).map((choiceDef: ItemOptionChoice | string) => {
+                                  const choiceName = typeof choiceDef === 'object' ? choiceDef.name : choiceDef;
+                                  const priceMod = typeof choiceDef === 'object' ? choiceDef.price_modifier : 0;
+                                  const isSelected = qtyPickerOptions[opt.name] === choiceName;
+
+                                  let labelText = choiceName;
+                                  if (qtyPickerItem.combination_prices) {
+                                    const activeTipo = isTipoOpt ? choiceName : (qtyPickerOptions['Tipo'] || qtyPickerOptions['tipo']);
+                                    const activeSize = isSizeOpt ? choiceName : (qtyPickerOptions['Tamaño'] || qtyPickerOptions['tamano'] || qtyPickerOptions['size']);
+                                    const comboPrice = resolveCombinationPrice(qtyPickerItem.combination_prices, -1, activeTipo, activeSize);
+                                    if (comboPrice !== -1) {
+                                      labelText = `${choiceName} (${formatCurrency(comboPrice, currency)})`;
+                                    } else if (priceMod) {
+                                      labelText = `${choiceName} (${priceMod > 0 ? '+' : ''}${formatCurrency(priceMod, currency)})`;
+                                    }
+                                  } else if (priceMod) {
+                                    labelText = `${choiceName} (${priceMod > 0 ? '+' : ''}${formatCurrency(priceMod, currency)})`;
+                                  }
+
+                                  return (
+                                    <TouchableOpacity
+                                      key={choiceName}
+                                      onPress={() => {
+                                        setQtyPickerOptions((prev: Record<string, string>) => ({ ...prev, [opt.name]: choiceName }));
+                                      }}
+                                      style={{
+                                        paddingHorizontal: 14,
+                                        paddingVertical: 8,
+                                        borderRadius: 99,
+                                        borderWidth: 2,
+                                        backgroundColor: isSelected ? tp[600] : 'white',
+                                        borderColor: isSelected ? tp[600] : '#e5e7eb'
+                                      }}
+                                    >
+                                      <Text style={{ fontWeight: '700', fontSize: 13, color: isSelected ? 'white' : '#374151' }}>
+                                        {labelText}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  );
+                                })}
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    )}
+
+                    {/* Stock Status Badge */}
+                    <View style={{ width: '100%', marginBottom: 20 }}>
+                      {isOutOfStock ? (
+                        <View style={{ backgroundColor: '#fef2f2', borderColor: '#fecaca', borderWidth: 1, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, alignItems: 'center' }}>
+                          <Text style={{ color: '#dc2626', fontSize: 13, fontWeight: '700', textAlign: 'center' }}>
+                            ⚠️ Agotado {limitingItemName ? `(Sin stock de ${limitingItemName})` : ''}
+                          </Text>
+                        </View>
+                      ) : maxQty < 999 ? (
+                        <View style={{ backgroundColor: '#ecfdf5', borderColor: '#a7f3d0', borderWidth: 1, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, alignItems: 'center' }}>
+                          <Text style={{ color: '#059669', fontSize: 13, fontWeight: '700' }}>
+                            ✓ Stock disponible: {maxQty} {maxQty === 1 ? 'unidad' : 'unidades'}
+                          </Text>
+                        </View>
+                      ) : (
+                        <View style={{ backgroundColor: '#f9fafb', borderColor: '#e5e7eb', borderWidth: 1, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, alignItems: 'center' }}>
+                          <Text style={{ color: '#4b5563', fontSize: 13, fontWeight: '600' }}>
+                            ✓ En existencia
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {/* Stepper */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20, marginBottom: 20 }}>
+                      <TouchableOpacity
+                        onPress={() => setQtyPickerCount((q: number) => Math.max(1, q - 1))}
+                        disabled={isOutOfStock || qtyPickerCount <= 1}
+                        style={{
+                          width: 44,
+                          height: 44,
+                          borderRadius: 12,
+                          backgroundColor: qtyPickerCount > 1 && !isOutOfStock ? '#fee2e2' : '#f3f4f6',
+                          borderWidth: 1,
+                          borderColor: qtyPickerCount > 1 && !isOutOfStock ? '#fca5a5' : '#e5e7eb',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          opacity: isOutOfStock || qtyPickerCount <= 1 ? 0.5 : 1
+                        }}
+                      >
+                        <Text style={{ fontSize: 24, fontWeight: '900', color: qtyPickerCount > 1 && !isOutOfStock ? '#dc2626' : '#9ca3af' }}>−</Text>
+                      </TouchableOpacity>
+                      <View style={{ width: 64, height: 44, backgroundColor: '#f3f4f6', borderRadius: 12, alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ fontSize: 22, fontWeight: '900', color: isOutOfStock ? '#9ca3af' : '#111827' }}>
+                          {effectiveCount}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => setQtyPickerCount((q: number) => Math.min(maxQty, q + 1))}
+                        disabled={atMax}
+                        style={{
+                          width: 44,
+                          height: 44,
+                          borderRadius: 12,
+                          backgroundColor: atMax ? '#f3f4f6' : tp[100],
+                          borderWidth: 1,
+                          borderColor: atMax ? '#e5e7eb' : tp[300],
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          opacity: atMax ? 0.5 : 1
+                        }}
+                      >
+                        <Text style={{ fontSize: 24, fontWeight: '900', color: atMax ? '#9ca3af' : tp[600] }}>+</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Subtotal */}
+                    <Text style={{ fontSize: 14, color: '#6b7280', marginBottom: 16 }}>
+                      {t('pos.main.subtotal', language)}: <Text style={{ fontWeight: '800', color: '#111827', fontSize: 16 }}>
+                        {formatCurrency(effectiveCount * unitPrice, currency)}
+                      </Text>
                     </Text>
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      const itemToAdd = qtyPickerItem;
-                      const optionsToAdd = qtyPickerOptions;
-                      const count = qtyPickerCount;
-                      setQtyPickerItem(null);
-                      setQtyPickerCount(1);
-                      setQtyPickerOptions({});
-                      (async () => {
-                        try {
-                          for (let i = 0; i < count; i++) {
-                            await addToCart(itemToAdd, optionsToAdd, []);
-                          }
-                        } catch (err) {
-                          console.error('Error adding multiple to cart:', err);
+
+                    {/* Submit Button */}
+                    <TouchableOpacity
+                      disabled={isOutOfStock}
+                      onPress={() => {
+                        const itemToAdd = qtyPickerItem;
+                        const optionsToAdd = qtyPickerOptions;
+                        const count = effectiveCount;
+                        if (count <= 0) return;
+                        setQtyPickerItem(null);
+                        setQtyPickerCount(1);
+                        setQtyPickerOptions({});
+                        addToCart(itemToAdd, optionsToAdd, [], count).catch(err => {
+                          console.error('Error adding to cart:', err);
+                        });
+                      }}
+                      style={{
+                        backgroundColor: isOutOfStock ? '#e5e7eb' : tp[600],
+                        paddingVertical: 14,
+                        paddingHorizontal: 24,
+                        borderRadius: 16,
+                        width: '100%',
+                        alignItems: 'center',
+                        shadowColor: isOutOfStock ? 'transparent' : tp[600],
+                        shadowOpacity: isOutOfStock ? 0 : 0.3,
+                        shadowRadius: 10,
+                        shadowOffset: { width: 0, height: 4 }
+                      }}
+                    >
+                      <Text style={{ color: isOutOfStock ? '#9ca3af' : 'white', fontSize: 16, fontWeight: '800' }}>
+                        {isOutOfStock
+                          ? 'Agotado — Sin Stock'
+                          : `${t('pos.main.add_to_cart', language).replace('{qty}', String(effectiveCount))} • ${formatCurrency(effectiveCount * unitPrice, currency)}`
                         }
-                      })();
-                    }}
-                    style={{ backgroundColor: tp[600], paddingVertical: 16, paddingHorizontal: 32, borderRadius: 16, width: '100%', alignItems: 'center', shadowColor: tp[600], shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 6 } }}
-                  >
-                    <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>
-                      {t('pos.main.add_to_cart', language).replace('{qty}', String(qtyPickerCount))}
-                    </Text>
-                  </TouchableOpacity>
-                </>
-              )}
+                      </Text>
+                    </TouchableOpacity>
+                  </ScrollView>
+                );
+              })()}
             </TouchableOpacity>
           </TouchableOpacity>
         </View>

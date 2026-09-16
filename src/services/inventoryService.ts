@@ -5,6 +5,7 @@
  * and single-ingredient adjustment operations against Supabase + local state.
  */
 import { supabase } from '../utils/supabase';
+import { filterRecipesByVariation } from '../utils/recipeUtils';
 
 import type { CartItem, CartItemIngredient, MenuItem, Recipe, ItemOptionChoice } from '../types';
 
@@ -84,8 +85,13 @@ async function applyStockChanges(
  * Build a map of { ingredientId → totalQuantity } for all ingredients in a cart item.
  * Uses exact recipe quantities defined for the selected size without artificial multipliers.
  */
-function buildDeductionMap(cartItem: CartItem, multiplier: number): Record<string, number> {
+export function buildDeductionMap(cartItem: CartItem, multiplier: number): Record<string, number> {
     const deductions: Record<string, number> = {};
+
+    // If the main item itself directly tracks inventory and has no recipe ingredients
+    if (cartItem.item.track_inventory && (!cartItem.ingredients || cartItem.ingredients.length === 0)) {
+        deductions[cartItem.item.id] = (deductions[cartItem.item.id] || 0) + multiplier;
+    }
 
     // Main item ingredients (non-removed)
     for (const ing of cartItem.ingredients) {
@@ -97,6 +103,9 @@ function buildDeductionMap(cartItem: CartItem, multiplier: number): Record<strin
 
     // Combo sub-item ingredients
     for (const sub of (cartItem.sub_items || [])) {
+        if (sub.item.track_inventory && (!sub.ingredients || sub.ingredients.length === 0)) {
+            deductions[sub.item.id] = (deductions[sub.item.id] || 0) + (sub.quantity * multiplier);
+        }
         for (const ing of sub.ingredients) {
             if (!ing.removed) {
                 const qty = (ing.extra ? 1 : (ing.recipe_quantity || 1)) * sub.quantity * multiplier;
@@ -106,6 +115,141 @@ function buildDeductionMap(cartItem: CartItem, multiplier: number): Record<strin
     }
 
     return deductions;
+}
+
+/**
+ * Validates if an item in the cart can increment its quantity by delta units (default 1).
+ * Checks available stock of all recipe ingredients and combo sub-items.
+ */
+export function canIncrementCartItem(
+    cartItem: CartItem,
+    allIngredients: MenuItem[],
+    items: MenuItem[],
+    delta: number = 1
+): { canIncrement: boolean; reason?: string } {
+    const deductions = buildDeductionMap(cartItem, delta);
+    const pool = [...allIngredients, ...items];
+
+    for (const [id, neededQty] of Object.entries(deductions)) {
+        const item = pool.find(i => i.id === id);
+        if (item?.track_inventory) {
+            const currentStock = item.stock_level ?? 0;
+            if (currentStock < neededQty) {
+                return {
+                    canIncrement: false,
+                    reason: `Stock insuficiente de "${item.name}". Disponible: ${currentStock}, necesario para +${delta}: ${neededQty}.`
+                };
+            }
+        }
+    }
+
+    return { canIncrement: true };
+}
+
+/**
+ * Calculates the maximum orderable quantity for a product under a specific (Tipo, Tamaño) variation,
+ * based on current ingredient stocks in the kitchen/pantry.
+ */
+export function calculateVariationMaxStock(
+    item: MenuItem,
+    selectedTipo: string | null | undefined,
+    selectedSize: string | null | undefined,
+    allIngredients: MenuItem[],
+    recipes: Recipe[],
+    items: MenuItem[]
+): { maxQty: number; limitingItemName?: string } {
+    let maxQty = Infinity;
+    let limitingItemName: string | undefined = undefined;
+
+    const pool = [...allIngredients, ...items];
+
+    // Direct product stock check if it tracks inventory
+    const directItem = pool.find(i => i.id === item.id) || item;
+    if (directItem.track_inventory) {
+        const stock = directItem.stock_level ?? 0;
+        if (stock < maxQty) {
+            maxQty = stock;
+            limitingItemName = directItem.name;
+        }
+    }
+
+    const itemRecipes = recipes.filter(r => r.parent_item_id === item.id);
+    const matchedRecipes = filterRecipesByVariation(itemRecipes, selectedTipo, selectedSize);
+
+    if (item.type === 'combo') {
+        for (const r of matchedRecipes) {
+            const subProduct = pool.find(i => i.id === r.child_item_id);
+            if (subProduct) {
+                if (subProduct.track_inventory) {
+                    const maxFromSub = Math.floor((subProduct.stock_level ?? 0) / (r.quantity || 1));
+                    if (maxFromSub < maxQty) {
+                        maxQty = maxFromSub;
+                        limitingItemName = subProduct.name;
+                    }
+                }
+                const subRecipes = recipes.filter(sr => sr.parent_item_id === subProduct.id);
+                const matchedSubRecipes = filterRecipesByVariation(subRecipes, selectedTipo, selectedSize);
+                for (const sr of matchedSubRecipes) {
+                    const subIng = pool.find(i => i.id === sr.child_item_id);
+                    if (subIng && subIng.track_inventory) {
+                        const totalNeeded = (sr.quantity || 1) * (r.quantity || 1);
+                        const maxFromSubIng = Math.floor((subIng.stock_level ?? 0) / totalNeeded);
+                        if (maxFromSubIng < maxQty) {
+                            maxQty = maxFromSubIng;
+                            limitingItemName = subIng.name;
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        for (const r of matchedRecipes) {
+            const ing = pool.find(i => i.id === r.child_item_id);
+            if (ing && ing.track_inventory) {
+                const maxFromIng = Math.floor((ing.stock_level ?? 0) / (r.quantity || 1));
+                if (maxFromIng < maxQty) {
+                    maxQty = maxFromIng;
+                    limitingItemName = ing.name;
+                }
+            }
+        }
+    }
+
+    if (!isFinite(maxQty)) {
+        maxQty = 999;
+    }
+
+    return { maxQty: Math.max(0, maxQty), limitingItemName };
+}
+
+/**
+ * Validates whether a cart item can switch its variation/options to newCartItem at its current quantity.
+ * Refunds the old options' ingredients virtually and checks if the new options can be fulfilled.
+ */
+export function canChangeCartItemVariation(
+    oldCartItem: CartItem,
+    newCartItem: CartItem,
+    allIngredients: MenuItem[],
+    items: MenuItem[]
+): { canChange: boolean; reason?: string } {
+    const oldDeductions = buildDeductionMap(oldCartItem, oldCartItem.quantity);
+    const newDeductions = buildDeductionMap(newCartItem, newCartItem.quantity);
+    const pool = [...allIngredients, ...items];
+
+    for (const [id, neededQty] of Object.entries(newDeductions)) {
+        const item = pool.find(i => i.id === id);
+        if (item?.track_inventory) {
+            const availableStock = (item.stock_level ?? 0) + (oldDeductions[id] || 0);
+            if (availableStock < neededQty) {
+                return {
+                    canChange: false,
+                    reason: `No hay suficiente stock de "${item.name}" para esta opción. Disponible: ${availableStock}, requerido: ${neededQty}.`
+                };
+            }
+        }
+    }
+
+    return { canChange: true };
 }
 
 /**

@@ -1,3 +1,4 @@
+import { Alert } from 'react-native';
 import { create } from 'zustand';
 import { supabase, setTenantIdHeader } from '../utils/supabase';
 import { buildReceiptBuffer, printToNetwork } from '../utils/printerEngine';
@@ -7,10 +8,12 @@ import {
     getIngredientMultiplier as getIngredientMultiplierImpl,
     deductInventoryForCartItem as deductInventoryForCartItemImpl,
     refundInventoryForCartItem as refundInventoryForCartItemImpl,
-    adjustSingleIngredientStock as adjustSingleIngredientStockImpl
+    adjustSingleIngredientStock as adjustSingleIngredientStockImpl,
+    canIncrementCartItem,
+    canChangeCartItemVariation
 } from '../services/inventoryService';
 import { printCustomerReceipt as printCustomerReceiptImpl, triggerCashDrawer as triggerCashDrawerImpl } from '../services/printerService';
-import { decodeRecipeVariation, resolveCombinationPrice } from '../utils/recipeUtils';
+import { decodeRecipeVariation, resolveCombinationPrice, filterRecipesByVariation } from '../utils/recipeUtils';
 import type {
     ScreenName, OrderType,
     MenuItem, ItemOption, ItemOptionChoice, Recipe,
@@ -107,15 +110,15 @@ interface PosState {
     updateTicketItemStatus: (itemId: string, status: string) => Promise<void>;
     markExpediterBatchComplete: (batchId: string) => Promise<void>;
     voidOrder: (orderId: string) => Promise<void>;
-    addToCart: (item: MenuItem, selectedOptions?: Record<string, string>, extras?: MenuItem[]) => Promise<void>;
+    addToCart: (item: MenuItem, selectedOptions?: Record<string, string>, extras?: MenuItem[], initialQuantity?: number) => Promise<void>;
     removeFromCart: (cart_id: string) => void;
     clearCart: () => void;
     toggleIngredient: (cart_id: string, ingredient_id: string, sub_cart_id?: string) => void;
     addExtraIngredient: (cart_id: string, ingredient: MenuItem, sub_cart_id?: string) => void;
     removeExtraIngredient: (cart_id: string, ingredient_id: string, sub_cart_id?: string) => void;
 
-    updateCartItemOptions: (cart_id: string, options: Record<string, string>, sub_cart_id?: string) => void;
-    incrementCartItemQuantity: (cart_id: string) => void;
+    updateCartItemOptions: (cart_id: string, options: Record<string, string>, sub_cart_id?: string) => Promise<{ success: boolean; reason?: string }>;
+    incrementCartItemQuantity: (cart_id: string) => Promise<{ success: boolean; reason?: string }>;
     decrementCartItemQuantity: (cart_id: string) => void;
     sendToKitchen: () => Promise<void>;
     checkout: (payments: Payment[]) => Promise<{ order_number: string, table_name: string | null } | null>;
@@ -1066,7 +1069,7 @@ export const usePosStore = create<PosState>((set, get) => ({
     },
 
 
-    addToCart: async (product, selectedOptions = {}, extras = []) => {
+    addToCart: async (product, selectedOptions = {}, extras = [], initialQuantity = 1) => {
         const { data: recipeData } = await supabase
             .from('recipes')
             .select('*, child_item:items!child_item_id(*)')
@@ -1087,52 +1090,19 @@ export const usePosStore = create<PosState>((set, get) => ({
         );
         let selectedSize = sizeKey ? selectedOptions[sizeKey] : null;
 
-        const filterRecipes = (rawList: any[], targetTipo: string | null, targetSize: string | null) => {
-            const decoded = (rawList || []).map((r: any) => {
-                const dec = decodeRecipeVariation(r);
-                return {
-                    ...r,
-                    type_name: dec.type_name,
-                    size_name: dec.size_name
-                };
-            });
-
-            const normTipo = targetTipo ? targetTipo.trim().toLowerCase() : null;
-            const normSize = targetSize ? targetSize.trim().toLowerCase() : null;
-
-            if (normTipo && normSize) {
-                const exact = decoded.filter((r: any) => 
-                    (r.type_name ? r.type_name.toLowerCase() : null) === normTipo &&
-                    (r.size_name ? r.size_name.toLowerCase() : null) === normSize
-                );
-                if (exact.length > 0) return exact;
-            }
-
-            if (normTipo) {
-                const matchTipo = decoded.filter((r: any) => 
-                    (r.type_name ? r.type_name.toLowerCase() : null) === normTipo && !r.size_name
-                );
-                if (matchTipo.length > 0) return matchTipo;
-            }
-
-            if (normSize) {
-                const matchSize = decoded.filter((r: any) => 
-                    !r.type_name && (r.size_name ? r.size_name.toLowerCase() : null) === normSize
-                );
-                if (matchSize.length > 0) return matchSize;
-            }
-
-            const base = decoded.filter((r: any) => !r.type_name && !r.size_name);
-            if (base.length > 0) return base;
-
-            return decoded;
-        };
-
-        const filteredRecipeData = filterRecipes(recipeData || [], selectedTipo, selectedSize);
+        const filteredRecipeData = filterRecipesByVariation(recipeData || [], selectedTipo, selectedSize);
 
         // Keep only the fields React Native / Hermes needs to display and calculate.
         // Storing full Supabase row objects causes JSON.stringify to OOM-crash in Hermes.
-        const slimProduct: MenuItem = { id: product.id, name: product.name, base_price: product.base_price, type: product.type, options: product.options, combination_prices: product.combination_prices };
+        const slimProduct: MenuItem = { 
+            id: product.id, 
+            name: product.name, 
+            base_price: product.base_price, 
+            type: product.type, 
+            track_inventory: product.track_inventory,
+            options: product.options, 
+            combination_prices: product.combination_prices 
+        };
 
         let sub_items: CartItem[] = [];
         let ingredients: CartItemIngredient[] = [];
@@ -1140,14 +1110,22 @@ export const usePosStore = create<PosState>((set, get) => ({
         if (product.type === 'combo') {
             for (const r of filteredRecipeData) {
                 const subProduct = r.child_item;
-                const slimSubProduct: MenuItem = { id: subProduct.id, name: subProduct.name, base_price: subProduct.base_price, type: subProduct.type, options: subProduct.options, combination_prices: subProduct.combination_prices };
+                const slimSubProduct: MenuItem = { 
+                    id: subProduct.id, 
+                    name: subProduct.name, 
+                    base_price: subProduct.base_price, 
+                    type: subProduct.type, 
+                    track_inventory: subProduct.track_inventory,
+                    options: subProduct.options, 
+                    combination_prices: subProduct.combination_prices 
+                };
 
                 const { data: subRecipeData } = await supabase
                     .from('recipes')
                     .select('*, child_item:items!child_item_id(*)')
                     .eq('parent_item_id', subProduct.id);
 
-                const filteredSubRecipeData = filterRecipes(subRecipeData || [], selectedTipo, selectedSize);
+                const filteredSubRecipeData = filterRecipesByVariation(subRecipeData || [], selectedTipo, selectedSize);
 
                 const subIngredients: CartItemIngredient[] = filteredSubRecipeData.map((sr: any) => ({
                     instance_id: Math.random().toString(36).substring(2, 11) + Date.now().toString(36),
@@ -1162,7 +1140,8 @@ export const usePosStore = create<PosState>((set, get) => ({
                 const defaultSubOptions: Record<string, string> = {};
                 (subProduct.options || []).forEach((opt: any) => {
                     if (!opt.hide_in_combo && opt.choices && opt.choices.length > 0) {
-                        defaultSubOptions[opt.name] = opt.choices[0];
+                        const first = opt.choices[0];
+                        defaultSubOptions[opt.name] = typeof first === 'object' ? first.name : first;
                     }
                 });
 
@@ -1200,10 +1179,12 @@ export const usePosStore = create<PosState>((set, get) => ({
             ingredients = [...ingredients, ...parsedExtras];
         }
 
+        const qtyToAdd = Math.max(1, initialQuantity);
+
         const newCartItem: CartItem = {
             cart_id: Math.random().toString(36).substring(2, 11) + Date.now().toString(36),
             item: slimProduct,
-            quantity: 1,
+            quantity: qtyToAdd,
             ingredients,
             sub_items,
             selectedOptions
@@ -1218,7 +1199,7 @@ export const usePosStore = create<PosState>((set, get) => ({
         await get().saveOrder();
 
         // REAL-TIME: Deduct inventory immediately
-        await deductInventoryForCartItem(newCartItem, 1, get, set);
+        await deductInventoryForCartItem(newCartItem, qtyToAdd, get, set);
     },
 
     removeFromCart: async (cart_id) => {
@@ -1440,46 +1421,16 @@ export const usePosStore = create<PosState>((set, get) => ({
         await adjustSingleIngredientStock(ingredient_id, cartItem?.quantity ?? 1, -1, set);
     },
 
-    updateCartItemOptions: (cart_id, options, sub_cart_id) => {
+    updateCartItemOptions: async (cart_id, options, sub_cart_id) => {
         const state = get();
         const oldCi = state.cart.find(c => c.cart_id === cart_id);
-        if (!oldCi) return;
+        if (!oldCi) return { success: false, reason: 'Item not found in cart' };
 
         let newCi = JSON.parse(JSON.stringify(oldCi));
 
         const getNewIngredients = (item_id: string, selectedTipo: string | null, selectedSize: string | null, oldIngredients: any[]) => {
-            const normTipo = selectedTipo ? selectedTipo.trim().toLowerCase() : null;
-            const normSize = selectedSize ? selectedSize.trim().toLowerCase() : null;
             const subRecipes = state.recipes.filter((r: any) => r.parent_item_id === item_id);
-
-            let filteredSubRecipes: any[] = [];
-            // 1. Exact match for both Tipo & Tamaño
-            if (normTipo && normSize) {
-                filteredSubRecipes = subRecipes.filter((r: any) => 
-                    (r.type_name ? r.type_name.toLowerCase() : null) === normTipo &&
-                    (r.size_name ? r.size_name.toLowerCase() : null) === normSize
-                );
-            }
-            // 2. Match Tipo only
-            if (filteredSubRecipes.length === 0 && normTipo) {
-                filteredSubRecipes = subRecipes.filter((r: any) => 
-                    (r.type_name ? r.type_name.toLowerCase() : null) === normTipo && !r.size_name
-                );
-            }
-            // 3. Match Tamaño only
-            if (filteredSubRecipes.length === 0 && normSize) {
-                filteredSubRecipes = subRecipes.filter((r: any) => 
-                    !r.type_name && (r.size_name ? r.size_name.toLowerCase() : null) === normSize
-                );
-            }
-            // 4. Base General
-            if (filteredSubRecipes.length === 0) {
-                filteredSubRecipes = subRecipes.filter((r: any) => !r.type_name && !r.size_name);
-            }
-            // 5. Fallback all
-            if (filteredSubRecipes.length === 0) {
-                filteredSubRecipes = subRecipes;
-            }
+            const filteredSubRecipes = filterRecipesByVariation(subRecipes, selectedTipo, selectedSize);
 
             const newIngredients = filteredSubRecipes.map((r: any) => {
                 const child = state.allIngredients.find(i => i.id === r.child_item_id) || state.items.find(i => i.id === r.child_item_id);
@@ -1555,32 +1506,47 @@ export const usePosStore = create<PosState>((set, get) => ({
             }
         }
 
+        // VALIDATE STOCK BEFORE APPLYING VARIATION CHANGE
+        const check = canChangeCartItemVariation(oldCi, newCi, state.allIngredients, state.items);
+        if (!check.canChange) {
+            Alert.alert('Stock insuficiente', check.reason || 'No hay ingredientes suficientes para este cambio.');
+            return { success: false, reason: check.reason };
+        }
+
         set(s => ({
             cart: s.cart.map(c => c.cart_id === cart_id ? newCi : c)
         }));
 
         get().recalculateCartMath();
 
-        (async () => {
-            await refundInventoryForCartItem(oldCi, oldCi.quantity, get, set);
-            await deductInventoryForCartItem(newCi, newCi.quantity, get, set);
-            get().saveOrder();
-        })();
+        await refundInventoryForCartItem(oldCi, oldCi.quantity, get, set);
+        await deductInventoryForCartItem(newCi, newCi.quantity, get, set);
+        await get().saveOrder();
+
+        return { success: true };
     },
 
     incrementCartItemQuantity: async (cart_id) => {
-        const cartItem = get().cart.find((c: CartItem) => c.cart_id === cart_id);
-        set(state => ({
-            cart: state.cart.map((c: CartItem) =>
+        const state = get();
+        const cartItem = state.cart.find((c: CartItem) => c.cart_id === cart_id);
+        if (!cartItem) return { success: false, reason: 'Item not found in cart' };
+
+        const check = canIncrementCartItem(cartItem, state.allIngredients, state.items, 1);
+        if (!check.canIncrement) {
+            Alert.alert('Stock insuficiente', check.reason || 'No hay ingredientes suficientes para aumentar la cantidad.');
+            return { success: false, reason: check.reason };
+        }
+
+        set(s => ({
+            cart: s.cart.map((c: CartItem) =>
                 c.cart_id === cart_id ? { ...c, quantity: c.quantity + 1 } : c
             )
         }));
-        get().saveOrder();
+        await get().saveOrder();
 
         // REAL-TIME: Deduct 1 more unit worth of ingredients
-        if (cartItem) {
-            await deductInventoryForCartItem(cartItem, 1, get, set);
-        }
+        await deductInventoryForCartItem(cartItem, 1, get, set);
+        return { success: true };
     },
 
     decrementCartItemQuantity: async (cart_id) => {

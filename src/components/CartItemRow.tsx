@@ -16,6 +16,7 @@ interface CartItemRowProps {
   onIncrement: () => void;
   onDecrement: () => void;
   onRemove: () => void;
+  canIncrement?: boolean;
 }
 
 /**
@@ -25,7 +26,7 @@ interface CartItemRowProps {
  */
 export default function CartItemRow({
   cartItem, isInspecting, tp, language, currency,
-  getCartItemPrice, onPress, onIncrement, onDecrement, onRemove
+  getCartItemPrice, onPress, onIncrement, onDecrement, onRemove, canIncrement
 }: CartItemRowProps) {
   return (
     <TouchableOpacity
@@ -88,10 +89,16 @@ export default function CartItemRow({
             </View>
             <TouchableOpacity
               onPress={onIncrement}
-              style={{ width: 36, height: 36, backgroundColor: tp[50], borderColor: tp[200] }}
+              style={{
+                width: 36,
+                height: 36,
+                backgroundColor: canIncrement === false ? '#f3f4f6' : tp[50],
+                borderColor: canIncrement === false ? '#e5e7eb' : tp[200],
+                opacity: canIncrement === false ? 0.5 : 1
+              }}
               className="border rounded-xl shadow-sm items-center justify-center"
             >
-              <Text className="text-xl font-black leading-none" style={{ color: tp[700] }}>+</Text>
+              <Text className="text-xl font-black leading-none" style={{ color: canIncrement === false ? '#9ca3af' : tp[700] }}>+</Text>
             </TouchableOpacity>
           </View>
           <TouchableOpacity onPress={onRemove}>
