@@ -18,6 +18,7 @@ import IngredientEditor from "./src/components/IngredientEditor";
 import Toast from 'react-native-toast-message';
 import { t } from './src/utils/i18n';
 import { formatCurrency, CURRENCIES } from './src/utils/currency';
+import { resolveCombinationPrice } from './src/utils/recipeUtils';
 import { checkForUpdates } from "./src/utils/updateChecker";
 
 function MainApp() {
@@ -32,7 +33,7 @@ function MainApp() {
     currentPosUser, posLogin, themeColor,
     localReceiptPrinterId,
     availablePromotions, appliedGlobalPromotionIds, applyManualPromotion, removeManualPromotion, recalculateCartMath,
-    language, currency,
+    language, currency, secondaryCurrency, enableSecondaryCurrency, enableTax, taxRate, pricesIncludeTax, zoneBackgrounds,
     activeCashShift, showCashRegisterModal, setShowCashRegisterModal,
     openCashShift, closeCashShift, addCashAdjustment, usdExchangeRate
   } = usePosStore();
@@ -71,6 +72,9 @@ function MainApp() {
   const [showPromosModal, setShowPromosModal] = useState(false);
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [currentPayments, setCurrentPayments] = useState<{ amount: number, method: string, reference_id?: string }[]>([]);
+  const [tipAmount, setTipAmount] = useState<number>(0);
+  const [selectedTipPreset, setSelectedTipPreset] = useState<number | 'custom' | null>(0);
+  const [customTipInput, setCustomTipInput] = useState('');
   const [cashTenderAmount, setCashTenderAmount] = useState('');
   const [processingCard, setProcessingCard] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
@@ -166,9 +170,25 @@ function MainApp() {
   const getCartItemPrice = (item: CartItem) => {
     let itemTotal = item.item.base_price;
 
+    const selectedTipo = item.selectedOptions?.['Tipo'] || item.selectedOptions?.['tipo'];
+    const selectedSize = item.selectedOptions?.['Tamaño'] || item.selectedOptions?.['tamano'] || item.selectedOptions?.['size'];
+    const comboPrice = resolveCombinationPrice(
+      item.item.combination_prices,
+      item.item.base_price,
+      selectedTipo,
+      selectedSize
+    );
+    const hasComboMatch = comboPrice !== item.item.base_price;
+    if (hasComboMatch) {
+      itemTotal = comboPrice;
+    }
+
     // Main item / Combo-level option modifiers
     if (item.selectedOptions && item.item.options) {
       item.item.options.forEach((opt: ItemOption) => {
+        const isTipoOrSize = opt.name.toLowerCase() === 'tipo' || opt.name.toLowerCase() === 'tamaño' || opt.name.toLowerCase() === 'tamano' || opt.name.toLowerCase() === 'size';
+        if (hasComboMatch && isTipoOrSize) return;
+
         const selectedChoiceName = item.selectedOptions?.[opt.name];
         if (selectedChoiceName) {
           const choiceDef = (opt.choices || []).find((c: ItemOptionChoice) => (typeof c === 'object' ? c.name : c) === selectedChoiceName);
@@ -220,17 +240,28 @@ function MainApp() {
     });
 
     const baseImponibleIva = Math.max(0, subtotalBruto - totalDescuentos);
-    const montoIva = baseImponibleIva * 0.15; // 15% IVA Nicaragua
-    const totalNeto = baseImponibleIva + montoIva;
+    let montoIva = 0;
+    let totalNeto = baseImponibleIva;
+
+    if (enableTax !== false && !pricesIncludeTax) {
+      const ratePct = (typeof taxRate === 'number' ? taxRate : 15) / 100;
+      montoIva = baseImponibleIva * ratePct;
+      totalNeto = baseImponibleIva + montoIva;
+    } else {
+      montoIva = 0;
+      totalNeto = baseImponibleIva;
+    }
 
     return {
       subtotalBruto,
       totalDescuentos,
       baseImponibleIva,
       montoIva,
-      totalNeto
+      totalNeto,
+      enableTax,
+      pricesIncludeTax
     };
-  }, [cart]);
+  }, [cart, enableTax, taxRate, pricesIncludeTax]);
 
   const cartTotal = cartTotals.totalNeto;
 
@@ -382,10 +413,22 @@ function MainApp() {
                     </View>
                   )}
 
-                  <View className="flex flex-row justify-between mb-2">
-                    <Text className="text-gray-500 font-medium text-xs md:text-sm">{t('pos.lbl.tax', language)}</Text>
-                    <Text className="text-gray-900 font-bold text-xs md:text-sm">{formatCurrency(cartTotals.montoIva, currency)}</Text>
-                  </View>
+                  {pricesIncludeTax ? (
+                    <View className="flex flex-row justify-between mb-2">
+                      <Text className="text-gray-500 font-medium text-xs md:text-sm">{t('pos.lbl.tax', language)}</Text>
+                      <Text className="text-emerald-700 font-bold text-xs md:text-sm">{language === 'es' ? 'Incluido en precios' : 'Included in prices'}</Text>
+                    </View>
+                  ) : enableTax !== false ? (
+                    <View className="flex flex-row justify-between mb-2">
+                      <Text className="text-gray-500 font-medium text-xs md:text-sm">{t('pos.lbl.tax', language)} ({taxRate || 15}%)</Text>
+                      <Text className="text-gray-900 font-bold text-xs md:text-sm">{formatCurrency(cartTotals.montoIva, currency)}</Text>
+                    </View>
+                  ) : (
+                    <View className="flex flex-row justify-between mb-2">
+                      <Text className="text-gray-500 font-medium text-xs md:text-sm">{t('pos.lbl.tax', language)}</Text>
+                      <Text className="text-gray-400 font-bold text-xs md:text-sm">{language === 'es' ? 'Exento (0%)' : 'Exempt (0%)'}</Text>
+                    </View>
+                  )}
                 </View>
               )}
 
@@ -393,7 +436,14 @@ function MainApp() {
               {(!isMobile || isFooterExpanded) ? (
                 <>
                   <View className="flex-row justify-between items-center bg-gray-200/50 p-2.5 md:p-4 rounded-xl mb-3 md:mb-4 mt-1 md:mt-2">
-                    <Text className="text-base md:text-lg font-bold text-gray-900">{t('pos.lbl.total', language)}</Text>
+                    <View>
+                      <Text className="text-base md:text-lg font-bold text-gray-900">{t('pos.lbl.total', language)}</Text>
+                      {enableSecondaryCurrency && (
+                        <Text className="text-xs font-bold text-blue-600">
+                          ≈ ${(cartTotal / (usdExchangeRate || 36.80)).toFixed(2)} {secondaryCurrency}
+                        </Text>
+                      )}
+                    </View>
                     <Text className="text-2xl md:text-3xl font-black text-gray-900">{formatCurrency(cartTotal, currency)}</Text>
                   </View>
 
@@ -727,7 +777,23 @@ function MainApp() {
                                       const choiceName = typeof choiceDef === 'object' ? choiceDef.name : choiceDef;
                                       const isSelected = currentSelected[opt.name] === choiceName;
                                       const priceMod = typeof choiceDef === 'object' ? choiceDef.price_modifier : 0;
-                                      const labelText = priceMod ? `${choiceName} (${priceMod > 0 ? '+' : ''}${formatCurrency(priceMod, currency)})` : choiceName;
+
+                                      const isSizeOpt = opt.name.toLowerCase() === 'tamaño' || opt.name.toLowerCase() === 'tamano' || opt.name.toLowerCase() === 'size';
+                                      const isTipoOpt = opt.name.toLowerCase() === 'tipo';
+
+                                      let labelText = choiceName;
+                                      if (inspectingItem.item.combination_prices) {
+                                        const activeTipo = isTipoOpt ? choiceName : (currentSelected['Tipo'] || currentSelected['tipo']);
+                                        const activeSize = isSizeOpt ? choiceName : (currentSelected['Tamaño'] || currentSelected['tamano'] || currentSelected['size']);
+                                        const comboPrice = resolveCombinationPrice(inspectingItem.item.combination_prices, -1, activeTipo, activeSize);
+                                        if (comboPrice !== -1) {
+                                          labelText = `${choiceName} (${formatCurrency(comboPrice, currency)})`;
+                                        } else if (priceMod) {
+                                          labelText = `${choiceName} (${priceMod > 0 ? '+' : ''}${formatCurrency(priceMod, currency)})`;
+                                        }
+                                      } else if (priceMod) {
+                                        labelText = `${choiceName} (${priceMod > 0 ? '+' : ''}${formatCurrency(priceMod, currency)})`;
+                                      }
 
                                       return (
                                         <TouchableOpacity
@@ -947,7 +1013,23 @@ function MainApp() {
                             const choiceName = typeof choiceDef === 'object' ? choiceDef.name : choiceDef;
                             const isSelected = customizationOptions[opt.name] === choiceName;
                             const priceMod = typeof choiceDef === 'object' ? choiceDef.price_modifier : 0;
-                            const labelText = priceMod ? `${choiceName} (${priceMod > 0 ? '+' : ''}${formatCurrency(priceMod, currency)})` : choiceName;
+
+                            const isSizeOpt = opt.name.toLowerCase() === 'tamaño' || opt.name.toLowerCase() === 'tamano' || opt.name.toLowerCase() === 'size';
+                            const isTipoOpt = opt.name.toLowerCase() === 'tipo';
+
+                            let labelText = choiceName;
+                            if (customizationItem.combination_prices) {
+                              const activeTipo = isTipoOpt ? choiceName : (customizationOptions['Tipo'] || customizationOptions['tipo']);
+                              const activeSize = isSizeOpt ? choiceName : (customizationOptions['Tamaño'] || customizationOptions['tamano'] || customizationOptions['size']);
+                              const comboPrice = resolveCombinationPrice(customizationItem.combination_prices, -1, activeTipo, activeSize);
+                              if (comboPrice !== -1) {
+                                labelText = `${choiceName} (${formatCurrency(comboPrice, currency)})`;
+                              } else if (priceMod) {
+                                labelText = `${choiceName} (${priceMod > 0 ? '+' : ''}${formatCurrency(priceMod, currency)})`;
+                              }
+                            } else if (priceMod) {
+                              labelText = `${choiceName} (${priceMod > 0 ? '+' : ''}${formatCurrency(priceMod, currency)})`;
+                            }
 
                             return (
                               <TouchableOpacity
@@ -1203,12 +1285,13 @@ function MainApp() {
               </View>
 
               {(() => {
+                const orderFinalTotal = cartTotal + tipAmount;
                 const totalPaid = currentPayments.reduce((sum, p) => sum + p.amount, 0);
-                const remaining = Math.max(0, cartTotal - totalPaid);
+                const remaining = Math.max(0, orderFinalTotal - totalPaid);
                 const isFullyPaid = remaining <= 0;
 
                 // Progress calculation
-                const progressPct = Math.min(100, (totalPaid / cartTotal) * 100) || 0;
+                const progressPct = Math.min(100, (totalPaid / (orderFinalTotal || 1)) * 100) || 0;
 
                 const handleAddPayment = (method: string, amount: number) => {
                   if (isNaN(amount) || amount <= 0) return;
@@ -1252,277 +1335,372 @@ function MainApp() {
                       <View style={{ flex: (isLandscape || isTablet) ? 1 : undefined, borderRightWidth: (isLandscape || isTablet) ? 1 : 0, borderRightColor: '#f3f4f6', paddingRight: (isLandscape || isTablet) ? 32 : 0, borderBottomWidth: (!isLandscape && !isTablet) ? 1 : 0, borderBottomColor: '#f3f4f6', paddingBottom: (!isLandscape && !isTablet) ? 20 : 0 }}>
 
                         {/* Visual Balance Card */}
-                        <View style={{ backgroundColor: isFullyPaid ? '#f0fdf4' : tp[50], padding: 20, borderRadius: 20, marginBottom: 20, borderWidth: 1, borderColor: isFullyPaid ? '#bbf7d0' : tp[200] }}>
-                          <Text style={{ fontSize: 14, color: isFullyPaid ? '#166534' : tp[700], fontWeight: '700', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>{t('pos.checkout.remaining', language)}</Text>
-                          <Text style={{ fontSize: 40, fontWeight: '900', color: isFullyPaid ? '#15803d' : tp[900], letterSpacing: -1 }}>{formatCurrency(remaining, currency)}</Text>
-
-                        {/* Progress Bar */}
-                        <View style={{ height: 8, backgroundColor: isFullyPaid ? '#bbf7d0' : tp[200], borderRadius: 4, marginTop: 16, overflow: 'hidden' }}>
-                          <View style={{ height: '100%', width: `${progressPct}%`, backgroundColor: isFullyPaid ? '#22c55e' : tp[600] }} />
-                        </View>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
-                          <Text style={{ fontSize: 13, color: tp[600], fontWeight: '600' }}>{t('pos.checkout.paid_label', language)} {formatCurrency(totalPaid, currency)}</Text>
-                          <Text style={{ fontSize: 13, color: tp[600], fontWeight: '600' }}>{t('pos.checkout.total_label', language)} {formatCurrency(cartTotal, currency)}</Text>
-                        </View>
-                      </View>
-
-                      {processingCard ? (
-                        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', borderRadius: 16, borderWidth: 2, borderColor: '#e2e8f0', borderStyle: 'dashed' }}>
-                          <ActivityIndicator size="large" color={tp[600]} style={{ marginBottom: 16, transform: [{ scale: 1.5 }] }} />
-                          <Text style={{ fontSize: 20, fontWeight: '800', color: '#334155' }}>{t('pos.checkout.awaiting_card', language)}</Text>
-                          <Text style={{ fontSize: 14, color: '#64748b', marginTop: 8 }}>{t('pos.checkout.tap_insert', language)}</Text>
-                        </View>
-                      ) : !isFullyPaid ? (
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 16 }}>{t('pos.checkout.add_payment', language)}</Text>
-
-                          {/* Currency Tab Selector */}
-                          <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
-                            <TouchableOpacity
-                              onPress={() => setPayInUsd(false)}
-                              style={{ flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: !payInUsd ? tp[100] : '#f3f4f6', alignItems: 'center', borderWidth: 1, borderColor: !payInUsd ? tp[400] : '#e5e7eb' }}
-                            >
-                              <Text style={{ fontWeight: 'bold', color: !payInUsd ? tp[700] : '#4b5563' }}>
-                                {language === 'es' ? `Pago en ${currency === 'USD' ? 'Dólares' : 'Córdobas'}` : `Pay in ${currency === 'USD' ? 'Dollars' : 'Cordobas'}`}
+                        <View style={{ backgroundColor: isFullyPaid ? '#f0fdf4' : tp[50], padding: 20, borderRadius: 20, marginBottom: 16, borderWidth: 1, borderColor: isFullyPaid ? '#bbf7d0' : tp[200] }}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Text style={{ fontSize: 13, color: isFullyPaid ? '#166534' : tp[700], fontWeight: '700', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>{t('pos.checkout.remaining', language)}</Text>
+                            {enableSecondaryCurrency && (
+                              <Text style={{ fontSize: 13, color: isFullyPaid ? '#15803d' : '#0369a1', fontWeight: '800' }}>
+                                ≈ ${(remaining / (usdExchangeRate || 36.80)).toFixed(2)} {secondaryCurrency}
                               </Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              onPress={() => setPayInUsd(true)}
-                              style={{ flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: payInUsd ? '#e0f2fe' : '#f3f4f6', alignItems: 'center', borderWidth: 1, borderColor: payInUsd ? '#38bdf8' : '#e5e7eb' }}
-                            >
-                              <Text style={{ fontWeight: 'bold', color: payInUsd ? '#0369a1' : '#4b5563' }}>
-                                {language === 'es' ? 'Pago en Dólares (USD)' : 'Pay in Dollars (USD)'}
+                            )}
+                          </View>
+                          <Text style={{ fontSize: 38, fontWeight: '900', color: isFullyPaid ? '#15803d' : tp[900], letterSpacing: -1 }}>{formatCurrency(remaining, currency)}</Text>
+
+                          {/* Progress Bar */}
+                          <View style={{ height: 8, backgroundColor: isFullyPaid ? '#bbf7d0' : tp[200], borderRadius: 4, marginTop: 14, overflow: 'hidden' }}>
+                            <View style={{ height: '100%', width: `${progressPct}%`, backgroundColor: isFullyPaid ? '#22c55e' : tp[600] }} />
+                          </View>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
+                            <Text style={{ fontSize: 13, color: tp[600], fontWeight: '600' }}>{t('pos.checkout.paid_label', language)} {formatCurrency(totalPaid, currency)}</Text>
+                            <Text style={{ fontSize: 13, color: tp[600], fontWeight: '600' }}>{t('pos.checkout.total_label', language)} {formatCurrency(orderFinalTotal, currency)}</Text>
+                          </View>
+                        </View>
+
+                        {/* Tip Selector Toolbar */}
+                        <View style={{ backgroundColor: '#f8fafc', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 16 }}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                            <Text style={{ fontSize: 13, fontWeight: '800', color: '#334155' }}>
+                              {language === 'es' ? 'Propina de Servicio:' : 'Service Tip:'}
+                            </Text>
+                            {tipAmount > 0 ? (
+                              <TouchableOpacity
+                                onPress={() => { setTipAmount(0); setSelectedTipPreset(0); setCustomTipInput(''); }}
+                                style={{ backgroundColor: '#fee2e2', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}
+                              >
+                                <Text style={{ color: '#b91c1c', fontSize: 11, fontWeight: 'bold' }}>
+                                  {language === 'es' ? '❌ Quitar Propina (0%)' : '❌ Remove Tip (0%)'}
+                                </Text>
+                              </TouchableOpacity>
+                            ) : (
+                              <Text style={{ fontSize: 11, color: '#64748b', fontWeight: 'bold' }}>
+                                {language === 'es' ? 'Sin propina (0%)' : 'No tip (0%)'}
                               </Text>
-                            </TouchableOpacity>
+                            )}
                           </View>
 
-                          {payInUsd ? (
-                            /* USD Cash Payment Input card */
-                            <View style={{ backgroundColor: '#f0f9ff', padding: 20, borderRadius: 20, borderWidth: 1, borderColor: '#bae6fd', marginBottom: 16 }}>
-                              <Text style={{ fontWeight: '800', color: '#0369a1', marginBottom: 12 }}>
-                                {language === 'es' ? 'Monto Recibido en USD ($)' : 'Received Amount in USD ($)'}
-                              </Text>
-                              
-                              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
-                                <View style={{ flex: 1, backgroundColor: 'white', borderRadius: 12, borderWidth: 1, borderColor: '#bae6fd', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 }}>
-                                  <Text style={{ fontSize: 20, color: '#0284c7', fontWeight: 'bold' }}>$</Text>
-                                  <TextInput
-                                    value={usdAmountInput}
-                                    onChangeText={setUsdAmountInput}
-                                    keyboardType="decimal-pad"
-                                    placeholder={currency === 'USD' ? remaining.toFixed(2) : (remaining / usdExchangeRate).toFixed(2)}
-                                    placeholderTextColor="#9ca3af"
-                                    style={{ flex: 1, fontSize: 24, fontWeight: '800', paddingVertical: 12, marginLeft: 8, color: '#0f172a' }}
-                                  />
-                                </View>
-                              </View>
+                          <View style={{ flexDirection: 'row', gap: 6 }}>
+                            {[
+                              { label: '0%', val: 0 },
+                              { label: '5%', val: 0.05 },
+                              { label: '10%', val: 0.10 },
+                              { label: '15%', val: 0.15 },
+                            ].map(preset => {
+                              const isSelected = selectedTipPreset === preset.val;
+                              return (
+                                <TouchableOpacity
+                                  key={preset.label}
+                                  onPress={() => {
+                                    setSelectedTipPreset(preset.val);
+                                    setTipAmount(cartTotals.baseImponibleIva * preset.val);
+                                    setCustomTipInput('');
+                                  }}
+                                  style={{
+                                    flex: 1,
+                                    paddingVertical: 8,
+                                    borderRadius: 10,
+                                    alignItems: 'center',
+                                    backgroundColor: isSelected ? tp[600] : 'white',
+                                    borderWidth: 1,
+                                    borderColor: isSelected ? tp[600] : '#cbd5e1'
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 12, fontWeight: 'bold', color: isSelected ? 'white' : '#475569' }}>
+                                    {preset.label}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                          {tipAmount > 0 && (
+                            <Text style={{ fontSize: 12, color: tp[700], fontWeight: 'bold', marginTop: 8, textAlign: 'right' }}>
+                              + {formatCurrency(tipAmount, currency)}
+                            </Text>
+                          )}
+                        </View>
 
-                              {/* Conversion metrics */}
-                              <Text style={{ fontSize: 13, color: '#475569', fontWeight: '600', marginBottom: 4 }}>
-                                {language === 'es' ? `Tasa de Cambio: 1 USD = C$ ${usdExchangeRate.toFixed(2)}` : `Exchange Rate: 1 USD = C$ ${usdExchangeRate.toFixed(2)}`}
-                              </Text>
-                              {currency !== 'USD' && (
-                                <Text style={{ fontSize: 15, color: '#0369a1', fontWeight: '800' }}>
-                                  {language === 'es' ? 'Equivalente en Córdobas: ' : 'Equivalent in Cordobas: '}
-                                  C$ {(parseFloat(usdAmountInput || '0') * usdExchangeRate).toFixed(2)}
-                                </Text>
-                              )}
+                        {processingCard ? (
+                          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', borderRadius: 16, borderWidth: 2, borderColor: '#e2e8f0', borderStyle: 'dashed', padding: 24 }}>
+                            <ActivityIndicator size="large" color={tp[600]} style={{ marginBottom: 16, transform: [{ scale: 1.5 }] }} />
+                            <Text style={{ fontSize: 20, fontWeight: '800', color: '#334155' }}>{t('pos.checkout.awaiting_card', language)}</Text>
+                            <Text style={{ fontSize: 14, color: '#64748b', marginTop: 8 }}>{t('pos.checkout.tap_insert', language)}</Text>
+                          </View>
+                        ) : !isFullyPaid ? (
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 16, fontWeight: '800', color: '#111827', marginBottom: 12 }}>{t('pos.checkout.add_payment', language)}</Text>
 
+                            {/* Currency Tab Selector */}
+                            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
                               <TouchableOpacity
-                                onPress={() => {
-                                  const usdVal = parseFloat(usdAmountInput || (currency === 'USD' ? remaining.toString() : (remaining / usdExchangeRate).toString()));
-                                  if (isNaN(usdVal) || usdVal <= 0) {
-                                    Alert.alert(language === 'es' ? 'Error' : 'Invalid Amount', language === 'es' ? 'Ingrese un monto válido.' : 'Please enter a valid amount.');
-                                    return;
-                                  }
-                                  
-                                  const baseAmt = currency === 'USD' ? usdVal : usdVal * usdExchangeRate;
-                                  handleAddPayment('cash', baseAmt);
-                                  
-                                  // Record reference string so it displays USD received on receipt
-                                  const refStr = `USD: $${usdVal.toFixed(2)} (@ ${usdExchangeRate.toFixed(2)})`;
-                                  setCurrentPayments(prev => {
-                                    const updated = [...prev];
-                                    if (updated.length > 0) {
-                                      updated[updated.length - 1].reference_id = refStr;
-                                    }
-                                    return updated;
-                                  });
-                                  setUsdAmountInput('');
-                                  setPayInUsd(false);
-                                }}
-                                style={{ backgroundColor: '#0284c7', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 16 }}
+                                onPress={() => setPayInUsd(false)}
+                                style={{ flex: 1, paddingVertical: 10, borderRadius: 12, backgroundColor: !payInUsd ? tp[100] : '#f3f4f6', alignItems: 'center', borderWidth: 1, borderColor: !payInUsd ? tp[400] : '#e5e7eb' }}
                               >
-                                <Text style={{ color: 'white', fontWeight: '800', fontSize: 16 }}>
-                                  💵 {language === 'es' ? 'Confirmar Pago en USD' : 'Confirm USD Cash Payment'}
+                                <Text style={{ fontWeight: 'bold', color: !payInUsd ? tp[700] : '#4b5563', fontSize: 13 }}>
+                                  {language === 'es' ? `Pago en ${currency === 'USD' ? 'Dólares' : 'Córdobas'}` : `Pay in ${currency === 'USD' ? 'Dollars' : 'Cordobas'}`}
+                                </Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                onPress={() => setPayInUsd(true)}
+                                style={{ flex: 1, paddingVertical: 10, borderRadius: 12, backgroundColor: payInUsd ? '#e0f2fe' : '#f3f4f6', alignItems: 'center', borderWidth: 1, borderColor: payInUsd ? '#38bdf8' : '#e5e7eb' }}
+                              >
+                                <Text style={{ fontWeight: 'bold', color: payInUsd ? '#0369a1' : '#4b5563', fontSize: 13 }}>
+                                  {language === 'es' ? 'Pago en Dólares (USD)' : 'Pay in Dollars (USD)'}
                                 </Text>
                               </TouchableOpacity>
                             </View>
-                          ) : (
-                            /* Regular Unified Amount Input & Actions */
-                            <>
-                              <View style={{ backgroundColor: '#f9fafb', padding: 20, borderRadius: 20, borderWidth: 1, borderColor: '#e5e7eb', marginBottom: 16 }}>
-                                <Text style={{ fontWeight: '800', color: '#374151', marginBottom: 12 }}>{t('pos.checkout.amt_to_charge', language).replace(':', '')}</Text>
-                                <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
-                                  <View style={{ flex: 1, backgroundColor: 'white', borderRadius: 12, borderWidth: 1, borderColor: '#d1d5db', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 }}>
-                                    <Text style={{ fontSize: 20, color: '#9ca3af', fontWeight: 'bold' }}>{CURRENCIES[currency]?.symbol || '$'}</Text>
+
+                            {payInUsd ? (
+                              /* USD Cash Payment Input card */
+                              <View style={{ backgroundColor: '#f0f9ff', padding: 18, borderRadius: 18, borderWidth: 1, borderColor: '#bae6fd', marginBottom: 16 }}>
+                                <Text style={{ fontWeight: '800', color: '#0369a1', marginBottom: 10 }}>
+                                  {language === 'es' ? 'Monto Recibido en USD ($)' : 'Received Amount in USD ($)'}
+                                </Text>
+                                
+                                <View style={{ flexDirection: 'row', gap: 12, marginBottom: 10 }}>
+                                  <View style={{ flex: 1, backgroundColor: 'white', borderRadius: 12, borderWidth: 1, borderColor: '#bae6fd', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 }}>
+                                    <Text style={{ fontSize: 20, color: '#0284c7', fontWeight: 'bold' }}>$</Text>
                                     <TextInput
-                                      value={cashTenderAmount}
-                                      onChangeText={setCashTenderAmount}
+                                      value={usdAmountInput}
+                                      onChangeText={setUsdAmountInput}
                                       keyboardType="decimal-pad"
-                                      placeholder={remaining.toFixed(2)}
+                                      placeholder={currency === 'USD' ? remaining.toFixed(2) : (remaining / (usdExchangeRate || 36.80)).toFixed(2)}
                                       placeholderTextColor="#9ca3af"
-                                      style={{ flex: 1, fontSize: 24, fontWeight: '800', paddingVertical: 12, marginLeft: 8 }}
+                                      style={{ flex: 1, fontSize: 22, fontWeight: '800', paddingVertical: 10, marginLeft: 8, color: '#0f172a' }}
                                     />
                                   </View>
                                 </View>
 
-                                {/* Quick Amount Buttons */}
-                                <Text style={{ fontSize: 13, fontWeight: '600', color: '#6b7280', marginBottom: 8, textTransform: 'uppercase' }}>{t('pos.checkout.quick_select', language)}</Text>
-                                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                                  <TouchableOpacity onPress={() => setCashTenderAmount(remaining.toFixed(2))} style={{ backgroundColor: 'white', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db' }}>
-                                    <Text style={{ fontWeight: '700', color: '#374151' }}>{t('pos.checkout.exact', language)} {formatCurrency(remaining, currency)}</Text>
-                                  </TouchableOpacity>
-                                  {[10, 20, 50, 100].filter(amt => amt >= remaining).slice(0, 3).map(amt => (
-                                    <TouchableOpacity key={amt} onPress={() => setCashTenderAmount(amt.toString())} style={{ backgroundColor: 'white', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db' }}>
-                                      <Text style={{ fontWeight: '700', color: '#374151' }}>{formatCurrency(amt, currency)}</Text>
+                                {/* Conversion metrics */}
+                                <Text style={{ fontSize: 12, color: '#475569', fontWeight: '600', marginBottom: 4 }}>
+                                  {language === 'es' ? `Tasa de Cambio: 1 USD = C$ ${usdExchangeRate.toFixed(2)}` : `Exchange Rate: 1 USD = C$ ${usdExchangeRate.toFixed(2)}`}
+                                </Text>
+                                {currency !== 'USD' && (
+                                  <Text style={{ fontSize: 14, color: '#0369a1', fontWeight: '800' }}>
+                                    {language === 'es' ? 'Equivalente en Córdobas: ' : 'Equivalent in Cordobas: '}
+                                    C$ {(parseFloat(usdAmountInput || '0') * (usdExchangeRate || 36.80)).toFixed(2)}
+                                  </Text>
+                                )}
+
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    const usdVal = parseFloat(usdAmountInput || (currency === 'USD' ? remaining.toString() : (remaining / (usdExchangeRate || 36.80)).toString()));
+                                    if (isNaN(usdVal) || usdVal <= 0) {
+                                      Alert.alert(language === 'es' ? 'Error' : 'Invalid Amount', language === 'es' ? 'Ingrese un monto válido.' : 'Please enter a valid amount.');
+                                      return;
+                                    }
+                                    
+                                    const baseAmt = currency === 'USD' ? usdVal : usdVal * (usdExchangeRate || 36.80);
+                                    handleAddPayment('cash', baseAmt);
+                                    
+                                    const refStr = `USD: $${usdVal.toFixed(2)} (@ ${(usdExchangeRate || 36.80).toFixed(2)})`;
+                                    setCurrentPayments(prev => {
+                                      const updated = [...prev];
+                                      if (updated.length > 0) {
+                                        updated[updated.length - 1].reference_id = refStr;
+                                      }
+                                      return updated;
+                                    });
+                                    setUsdAmountInput('');
+                                    setPayInUsd(false);
+                                  }}
+                                  style={{ backgroundColor: '#0284c7', padding: 14, borderRadius: 12, alignItems: 'center', marginTop: 14 }}
+                                >
+                                  <Text style={{ color: 'white', fontWeight: '800', fontSize: 15 }}>
+                                    💵 {language === 'es' ? 'Confirmar Pago en USD' : 'Confirm USD Cash Payment'}
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                            ) : (
+                              /* Regular Unified Amount Input & Actions */
+                              <>
+                                <View style={{ backgroundColor: '#f9fafb', padding: 16, borderRadius: 18, borderWidth: 1, borderColor: '#e5e7eb', marginBottom: 14 }}>
+                                  <Text style={{ fontWeight: '800', color: '#374151', marginBottom: 10 }}>{t('pos.checkout.amt_to_charge', language).replace(':', '')}</Text>
+                                  <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+                                    <View style={{ flex: 1, backgroundColor: 'white', borderRadius: 12, borderWidth: 1, borderColor: '#d1d5db', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 }}>
+                                      <Text style={{ fontSize: 20, color: '#9ca3af', fontWeight: 'bold' }}>{CURRENCIES[currency]?.symbol || '$'}</Text>
+                                      <TextInput
+                                        value={cashTenderAmount}
+                                        onChangeText={setCashTenderAmount}
+                                        keyboardType="decimal-pad"
+                                        placeholder={remaining.toFixed(2)}
+                                        placeholderTextColor="#9ca3af"
+                                        style={{ flex: 1, fontSize: 22, fontWeight: '800', paddingVertical: 10, marginLeft: 8 }}
+                                      />
+                                    </View>
+                                  </View>
+
+                                  {/* Quick Amount Buttons */}
+                                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#6b7280', marginBottom: 6, textTransform: 'uppercase' }}>{t('pos.checkout.quick_select', language)}</Text>
+                                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                                    <TouchableOpacity onPress={() => setCashTenderAmount(remaining.toFixed(2))} style={{ backgroundColor: 'white', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db' }}>
+                                      <Text style={{ fontWeight: '700', color: '#374151', fontSize: 12 }}>{t('pos.checkout.exact', language)} {formatCurrency(remaining, currency)}</Text>
                                     </TouchableOpacity>
-                                  ))}
+                                    {[10, 20, 50, 100, 500, 1000].filter(amt => amt >= remaining).slice(0, 3).map(amt => (
+                                      <TouchableOpacity key={amt} onPress={() => setCashTenderAmount(amt.toString())} style={{ backgroundColor: 'white', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db' }}>
+                                        <Text style={{ fontWeight: '700', color: '#374151', fontSize: 12 }}>{formatCurrency(amt, currency)}</Text>
+                                      </TouchableOpacity>
+                                    ))}
+                                  </View>
                                 </View>
-                              </View>
 
-                              {/* Payment Method Action Buttons */}
-                              <View style={{ flexDirection: 'row', gap: 12 }}>
-                                <TouchableOpacity
-                                  onPress={() => handleAddPayment('cash', parseFloat(cashTenderAmount || remaining.toString()))}
-                                  style={{ flex: 1, backgroundColor: 'white', padding: 16, borderRadius: 16, borderWidth: 2, borderColor: '#22c55e', alignItems: 'center' }}
-                                >
-                                  <Text style={{ fontSize: 24, marginBottom: 8 }}>💵</Text>
-                                  <Text style={{ fontWeight: '800', color: '#166534' }}>{t('pos.checkout.cash', language)}</Text>
-                                </TouchableOpacity>
+                                {/* Payment Method Action Buttons */}
+                                <View style={{ flexDirection: 'row', gap: 10 }}>
+                                  <TouchableOpacity
+                                    onPress={() => handleAddPayment('cash', parseFloat(cashTenderAmount || remaining.toString()))}
+                                    style={{ flex: 1, backgroundColor: 'white', padding: 14, borderRadius: 14, borderWidth: 2, borderColor: '#22c55e', alignItems: 'center' }}
+                                  >
+                                    <Text style={{ fontSize: 22, marginBottom: 4 }}>💵</Text>
+                                    <Text style={{ fontWeight: '800', color: '#166534', fontSize: 13 }}>{t('pos.checkout.cash', language)}</Text>
+                                  </TouchableOpacity>
 
-                                <TouchableOpacity
-                                  onPress={() => handleAddPayment('credit_card', parseFloat(cashTenderAmount || remaining.toString()))}
-                                  style={{ flex: 1, backgroundColor: 'white', padding: 16, borderRadius: 16, borderWidth: 2, borderColor: '#3b82f6', alignItems: 'center' }}
-                                >
-                                  <Text style={{ fontSize: 24, marginBottom: 8 }}>💳</Text>
-                                  <Text style={{ fontWeight: '800', color: '#1e40af' }}>{t('pos.checkout.card', language)}</Text>
-                                </TouchableOpacity>
+                                  <TouchableOpacity
+                                    onPress={() => handleAddPayment('credit_card', parseFloat(cashTenderAmount || remaining.toString()))}
+                                    style={{ flex: 1, backgroundColor: 'white', padding: 14, borderRadius: 14, borderWidth: 2, borderColor: '#3b82f6', alignItems: 'center' }}
+                                  >
+                                    <Text style={{ fontSize: 22, marginBottom: 4 }}>💳</Text>
+                                    <Text style={{ fontWeight: '800', color: '#1e40af', fontSize: 13 }}>{t('pos.checkout.card', language)}</Text>
+                                  </TouchableOpacity>
 
-                                <TouchableOpacity
-                                  onPress={() => handleAddPayment('bank_deposit', parseFloat(cashTenderAmount || remaining.toString()))}
-                                  style={{ flex: 1, backgroundColor: 'white', padding: 16, borderRadius: 16, borderWidth: 2, borderColor: '#8b5cf6', alignItems: 'center' }}
-                                >
-                                  <Text style={{ fontSize: 24, marginBottom: 8 }}>🏦</Text>
-                                  <Text style={{ fontWeight: '800', color: '#5b21b6' }}>{t('pos.checkout.bank', language)}</Text>
-                                </TouchableOpacity>
-                              </View>
-                            </>
-                          )}
-                        </View>
-                      ) : (
-                        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                          <View style={{ width: 80, height: 80, backgroundColor: '#dcfce7', borderRadius: 40, alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-                            <Text style={{ fontSize: 40 }}>✅</Text>
-                          </View>
-                          <Text style={{ fontSize: 24, fontWeight: '900', color: '#166534' }}>{t('pos.checkout.fully_paid', language)}</Text>
-                          {cartTotal < totalPaid && (
-                            <View style={{ alignItems: 'center', marginTop: 12 }}>
-                              <Text style={{ fontSize: 18, color: '#15803d', fontWeight: 'bold' }}>
-                                {t('pos.checkout.change', language)} {formatCurrency(totalPaid - cartTotal, currency)}
-                              </Text>
-                              <Text style={{ fontSize: 20, color: '#0369a1', fontWeight: '900', marginTop: 12, backgroundColor: '#e0f2fe', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12, overflow: 'hidden' }}>
-                                {language === 'es' ? 'Entregar Cambio en Córdobas: ' : 'Give Change in Cordobas: '} 
-                                C$ {((totalPaid - cartTotal) * (currency === 'USD' ? usdExchangeRate : 1)).toFixed(2)}
-                              </Text>
-                            </View>
-                          )}
-                        </View>
-                      )}
-
-                    </View>
-
-                    {/* Right: Applied Payments & Action */}
-                    <View style={{ width: (isLandscape || isTablet) ? 280 : '100%', justifyContent: 'space-between', marginTop: (!isLandscape && !isTablet) ? 16 : 0 }}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 16 }}>{t('pos.checkout.applied_payments', language)}</Text>
-
-                        {currentPayments.length === 0 ? (
-                          <View style={{ backgroundColor: '#f9fafb', padding: 24, borderRadius: 16, alignItems: 'center', borderWidth: 1, borderColor: '#f3f4f6', borderStyle: 'dashed' }}>
-                            <Text style={{ color: '#9ca3af', fontWeight: '600' }}>{t('pos.checkout.no_payments', language)}</Text>
+                                  <TouchableOpacity
+                                    onPress={() => handleAddPayment('bank_deposit', parseFloat(cashTenderAmount || remaining.toString()))}
+                                    style={{ flex: 1, backgroundColor: 'white', padding: 14, borderRadius: 14, borderWidth: 2, borderColor: '#8b5cf6', alignItems: 'center' }}
+                                  >
+                                    <Text style={{ fontSize: 22, marginBottom: 4 }}>🏦</Text>
+                                    <Text style={{ fontWeight: '800', color: '#5b21b6', fontSize: 13 }}>{t('pos.checkout.bank', language)}</Text>
+                                  </TouchableOpacity>
+                                </View>
+                              </>
+                            )}
                           </View>
                         ) : (
-                          <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 200 }}>
-                            {currentPayments.map((p, idx) => (
-                              <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#f8fafc', padding: 16, borderRadius: 12, marginBottom: 8, borderWidth: 1, borderColor: '#e2e8f0' }}>
-                                <View>
-                                  <Text style={{ fontWeight: '800', color: '#334155', textTransform: 'capitalize' }}>
-                                    {p.method.replace('_', ' ')}
-                                  </Text>
-                                  {p.reference_id && <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>Ref: {p.reference_id}</Text>}
-                                </View>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                                  <Text style={{ fontWeight: '900', color: '#0f172a', fontSize: 16 }}>{formatCurrency(p.amount, currency)}</Text>
-                                  <TouchableOpacity onPress={() => setCurrentPayments(prev => prev.filter((_, i) => i !== idx))}>
-                                    <Text style={{ color: '#ef4444', fontWeight: 'bold', fontSize: 18 }}>×</Text>
-                                  </TouchableOpacity>
-                                </View>
+                          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 20 }}>
+                            <View style={{ width: 70, height: 70, backgroundColor: '#dcfce7', borderRadius: 35, alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+                              <Text style={{ fontSize: 34 }}>✅</Text>
+                            </View>
+                            <Text style={{ fontSize: 22, fontWeight: '900', color: '#166534' }}>{t('pos.checkout.fully_paid', language)}</Text>
+                            {orderFinalTotal < totalPaid && (
+                              <View style={{ alignItems: 'center', marginTop: 10 }}>
+                                <Text style={{ fontSize: 16, color: '#15803d', fontWeight: 'bold' }}>
+                                  {t('pos.checkout.change', language)} {formatCurrency(totalPaid - orderFinalTotal, currency)}
+                                </Text>
+                                <Text style={{ fontSize: 17, color: '#0369a1', fontWeight: '900', marginTop: 8, backgroundColor: '#e0f2fe', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 10, overflow: 'hidden' }}>
+                                  {language === 'es' ? 'Entregar Cambio en Córdobas: ' : 'Give Change in Cordobas: '} 
+                                  C$ {((totalPaid - orderFinalTotal) * (currency === 'USD' ? (usdExchangeRate || 36.80) : 1)).toFixed(2)}
+                                </Text>
                               </View>
-                            ))}
-                          </ScrollView>
+                            )}
+                          </View>
                         )}
+
                       </View>
 
-                      <View style={{ paddingTop: 24, borderTopWidth: 1, borderTopColor: '#f3f4f6' }}>
-                        <TouchableOpacity
-                          disabled={!isFullyPaid || isCheckingOut}
-                          onPress={async () => {
-                            setIsCheckingOut(true);
-                            try {
-                              const result = await checkout(currentPayments);
-                              if (result) {
-                                const hasCash = currentPayments.some(p => p.method === 'cash');
-                                if (hasCash) {
-                                  const pos = usePosStore.getState();
-                                  pos.openCashDrawer().catch(err => console.warn("Auto Drawer Kick Error:", err));
+                      {/* Right: Applied Payments & Action */}
+                      <View style={{ width: (isLandscape || isTablet) ? 300 : '100%', justifyContent: 'space-between', marginTop: (!isLandscape && !isTablet) ? 16 : 0 }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 17, fontWeight: '800', color: '#111827', marginBottom: 12 }}>{t('pos.checkout.applied_payments', language)}</Text>
+
+                          {/* Order Totals Summary Breakdown */}
+                          <View style={{ backgroundColor: '#f8fafc', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 14, gap: 4 }}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                              <Text style={{ fontSize: 12, color: '#64748b' }}>Subtotal</Text>
+                              <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155' }}>{formatCurrency(cartTotals.subtotalBruto, currency)}</Text>
+                            </View>
+                            {cartTotals.totalDescuentos > 0 && (
+                              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                                <Text style={{ fontSize: 12, color: '#ef4444' }}>Descuentos</Text>
+                                <Text style={{ fontSize: 12, fontWeight: '600', color: '#ef4444' }}>-{formatCurrency(cartTotals.totalDescuentos, currency)}</Text>
+                              </View>
+                            )}
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                              <Text style={{ fontSize: 12, color: '#64748b' }}>IVA</Text>
+                              <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155' }}>
+                                {pricesIncludeTax ? (language === 'es' ? 'Incluido' : 'Included') : formatCurrency(cartTotals.montoIva, currency)}
+                              </Text>
+                            </View>
+                            {tipAmount > 0 && (
+                              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                                <Text style={{ fontSize: 12, color: tp[700], fontWeight: 'bold' }}>Propina</Text>
+                                <Text style={{ fontSize: 12, fontWeight: 'bold', color: tp[700] }}>+{formatCurrency(tipAmount, currency)}</Text>
+                              </View>
+                            )}
+                            <View style={{ height: 1, backgroundColor: '#e2e8f0', marginVertical: 4 }} />
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <Text style={{ fontSize: 14, fontWeight: '900', color: '#0f172a' }}>Total</Text>
+                              <Text style={{ fontSize: 16, fontWeight: '900', color: tp[700] }}>{formatCurrency(orderFinalTotal, currency)}</Text>
+                            </View>
+                          </View>
+
+                          {currentPayments.length === 0 ? (
+                            <View style={{ backgroundColor: '#f9fafb', padding: 20, borderRadius: 14, alignItems: 'center', borderWidth: 1, borderColor: '#f3f4f6', borderStyle: 'dashed' }}>
+                              <Text style={{ color: '#9ca3af', fontWeight: '600', fontSize: 13 }}>{t('pos.checkout.no_payments', language)}</Text>
+                            </View>
+                          ) : (
+                            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 180 }}>
+                              {currentPayments.map((p, idx) => (
+                                <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#f8fafc', padding: 12, borderRadius: 10, marginBottom: 8, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                                  <View>
+                                    <Text style={{ fontWeight: '800', color: '#334155', textTransform: 'capitalize', fontSize: 13 }}>
+                                      {p.method.replace('_', ' ')}
+                                    </Text>
+                                    {p.reference_id && <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>Ref: {p.reference_id}</Text>}
+                                  </View>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                    <Text style={{ fontWeight: '900', color: '#0f172a', fontSize: 15 }}>{formatCurrency(p.amount, currency)}</Text>
+                                    <TouchableOpacity onPress={() => setCurrentPayments(prev => prev.filter((_, i) => i !== idx))}>
+                                      <Text style={{ color: '#ef4444', fontWeight: 'bold', fontSize: 16 }}>×</Text>
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+                              ))}
+                            </ScrollView>
+                          )}
+                        </View>
+
+                        <View style={{ paddingTop: 20, borderTopWidth: 1, borderTopColor: '#f3f4f6' }}>
+                          <TouchableOpacity
+                            disabled={!isFullyPaid || isCheckingOut}
+                            onPress={async () => {
+                              setIsCheckingOut(true);
+                              try {
+                                const result = await checkout(currentPayments);
+                                if (result) {
+                                  const hasCash = currentPayments.some(p => p.method === 'cash');
+                                  if (hasCash) {
+                                    const pos = usePosStore.getState();
+                                    pos.openCashDrawer().catch(err => console.warn("Auto Drawer Kick Error:", err));
+                                  }
+                                  setShowCheckoutModal(false);
+                                  setLastCompletedOrder({
+                                    ...result,
+                                    cartCopy: [...cart],
+                                    paymentsCopy: [...currentPayments],
+                                    total: orderFinalTotal,
+                                    subtotal: cartTotals.subtotalBruto,
+                                    tax: cartTotals.montoIva,
+                                    discount: cartTotals.totalDescuentos,
+                                    tip: tipAmount,
+                                    change: totalPaid > orderFinalTotal ? totalPaid - orderFinalTotal : 0
+                                  });
+                                  setTipAmount(0);
+                                  setSelectedTipPreset(0);
+                                  setShowReceiptModal(true);
+                                } else {
+                                  Alert.alert("Error", t('pos.checkout.error', language));
                                 }
-                                setShowCheckoutModal(false);
-                                setLastCompletedOrder({
-                                  ...result,
-                                  cartCopy: [...cart],
-                                  paymentsCopy: [...currentPayments],
-                                  total: cartTotal,
-                                  subtotal: cartTotals.subtotalBruto,
-                                  tax: cartTotals.montoIva,
-                                  discount: cartTotals.totalDescuentos,
-                                  change: totalPaid > cartTotal ? totalPaid - cartTotal : 0
-                                });
-                                setShowReceiptModal(true);
-                              } else {
-                                Alert.alert("Error", t('pos.checkout.error', language));
+                              } finally {
+                                setIsCheckingOut(false);
                               }
-                            } finally {
-                              setIsCheckingOut(false);
-                            }
-                          }}
-                          style={{
-                            backgroundColor: isFullyPaid && !isCheckingOut ? '#16a34a' : '#d1d5db',
-                            paddingVertical: 20,
-                            borderRadius: 16,
-                            alignItems: 'center',
-                            shadowColor: isFullyPaid ? '#16a34a' : 'transparent',
-                            shadowOpacity: 0.3,
-                            shadowRadius: 12,
-                            shadowOffset: { width: 0, height: 6 }
-                          }}
-                        >
-                          <Text style={{ color: 'white', fontSize: 20, fontWeight: '900' }}>{isCheckingOut ? t('pos.main.processing', language) : t('pos.checkout.complete', language)}</Text>
-                        </TouchableOpacity>
+                            }}
+                            style={{ backgroundColor: !isFullyPaid ? '#d1d5db' : '#15803d', padding: 16, borderRadius: 14, alignItems: 'center', shadowColor: '#15803d', shadowOpacity: 0.3, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } }}
+                          >
+                            <Text style={{ color: 'white', fontWeight: '900', fontSize: 16 }}>
+                              {isCheckingOut ? (language === 'es' ? 'Procesando...' : 'Processing...') : (language === 'es' ? 'Completar Orden & Recibo' : 'Complete Order & Receipt')}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
 
                     </View>
-                  </View>
-                </ScrollView>
+                  </ScrollView>
                 );
               })()}
 

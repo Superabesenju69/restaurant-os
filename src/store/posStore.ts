@@ -10,6 +10,7 @@ import {
     adjustSingleIngredientStock as adjustSingleIngredientStockImpl
 } from '../services/inventoryService';
 import { printCustomerReceipt as printCustomerReceiptImpl, triggerCashDrawer as triggerCashDrawerImpl } from '../services/printerService';
+import { decodeRecipeVariation, resolveCombinationPrice } from '../utils/recipeUtils';
 import type {
     ScreenName, OrderType,
     MenuItem, ItemOption, ItemOptionChoice, Recipe,
@@ -57,8 +58,14 @@ interface PosState {
     language: string;
     setLanguage: (lang: string) => void;
     currency: string;
+    secondaryCurrency: string;
+    enableSecondaryCurrency: boolean;
+    enableTax: boolean;
+    taxRate: number;
+    pricesIncludeTax: boolean;
     tables: FloorTable[];
     zones: TableZone[];
+    zoneBackgrounds: Record<string, string>;
     printers: Printer[];
     localReceiptPrinterId: string | null;
     setLocalReceiptPrinterId: (id: string | null) => void;
@@ -191,10 +198,23 @@ export const usePosStore = create<PosState>((set, get) => ({
         // 1. Calculate Gross Amounts (Before any discount)
         currentCart = currentCart.map(cartItem => {
             let unitPrice = cartItem.item.base_price || 0;
+
+            const selectedTipo = cartItem.selectedOptions?.['Tipo'] || cartItem.selectedOptions?.['tipo'];
+            const selectedSize = cartItem.selectedOptions?.['Tamaño'] || cartItem.selectedOptions?.['tamaño'] || cartItem.selectedOptions?.['size'];
+            const comboPrice = resolveCombinationPrice(cartItem.item.combination_prices, cartItem.item.base_price, selectedTipo, selectedSize);
+            const hasComboPrice = comboPrice !== cartItem.item.base_price;
+            if (hasComboPrice) {
+                unitPrice = comboPrice;
+            }
+
             if (cartItem.selectedOptions && cartItem.item.options) {
                 cartItem.item.options.forEach((opt: any) => {
+                    const optLower = (opt.name || '').toLowerCase();
+                    if (hasComboPrice && (optLower === 'tipo' || optLower === 'tamaño' || optLower === 'tamano' || optLower === 'size')) {
+                        return;
+                    }
                     const selectedChoice = cartItem.selectedOptions?.[opt.name];
-                    const choiceDef = (opt.choices || []).find((c: any) => c.name === selectedChoice);
+                    const choiceDef = (opt.choices || []).find((c: any) => (typeof c === 'object' ? c.name : c) === selectedChoice);
                     if (choiceDef && choiceDef.price_modifier) unitPrice += choiceDef.price_modifier;
                 });
             }
@@ -202,11 +222,23 @@ export const usePosStore = create<PosState>((set, get) => ({
                 if (ing.extra && !ing.removed) unitPrice += ing.base_price;
             });
             (cartItem.sub_items || []).forEach(sub => {
-                let subUnitPrice = 0;
+                let subUnitPrice = sub.item.base_price || 0;
+                const subTipo = sub.selectedOptions?.['Tipo'] || sub.selectedOptions?.['tipo'];
+                const subSize = sub.selectedOptions?.['Tamaño'] || sub.selectedOptions?.['tamaño'] || sub.selectedOptions?.['size'];
+                const subComboPrice = resolveCombinationPrice(sub.item.combination_prices, sub.item.base_price, subTipo, subSize);
+                const hasSubCombo = subComboPrice !== sub.item.base_price;
+                if (hasSubCombo) {
+                    subUnitPrice = subComboPrice;
+                }
+
                 if (sub.selectedOptions && sub.item.options) {
                     sub.item.options.forEach((opt: any) => {
+                        const optLower = (opt.name || '').toLowerCase();
+                        if (hasSubCombo && (optLower === 'tipo' || optLower === 'tamaño' || optLower === 'tamano' || optLower === 'size')) {
+                            return;
+                        }
                         const selectedChoice = sub.selectedOptions?.[opt.name];
-                        const choiceDef = (opt.choices || []).find((c: any) => c.name === selectedChoice);
+                        const choiceDef = (opt.choices || []).find((c: any) => (typeof c === 'object' ? c.name : c) === selectedChoice);
                         if (choiceDef && choiceDef.price_modifier) subUnitPrice += choiceDef.price_modifier;
                     });
                 }
@@ -394,8 +426,14 @@ export const usePosStore = create<PosState>((set, get) => ({
     themeMode: 'light',
     language: 'es',
     currency: 'USD',
+    secondaryCurrency: 'USD',
+    enableSecondaryCurrency: false,
+    enableTax: true,
+    taxRate: 15,
+    pricesIncludeTax: false,
     tables: [],
     zones: [],
+    zoneBackgrounds: {},
     printers: [],
     localReceiptPrinterId: null,
     setLocalReceiptPrinterId: (id) => set({ localReceiptPrinterId: id }),
@@ -505,13 +543,20 @@ export const usePosStore = create<PosState>((set, get) => ({
     fetchSettings: async () => {
         const localLang = await AsyncStorage.getItem('pos_language');
         const localRate = await AsyncStorage.getItem('pos_usd_exchange_rate');
-        const parsedRate = localRate ? parseFloat(localRate) : 36.00;
 
         const { data: settingsData } = await supabase.from('restaurant_settings').select('*').limit(1);
         const settings = settingsData && settingsData.length > 0 ? settingsData[0] : null;
         const { data: tablesData } = await supabase.from('tables').select('*').order('name');
         const { data: zonesData } = await supabase.from('table_zones').select('*').order('display_order');
         const { data: printers } = await supabase.from('printers').select('*').order('name');
+
+        const cs = settings?.attendance_settings?.currency_settings || settings?.currency_settings;
+        const ts = settings?.attendance_settings?.tax_settings || settings?.tax_settings;
+        const zoneBg = settings?.attendance_settings?.zone_backgrounds || settings?.zone_backgrounds || {};
+
+        const remoteRate = cs?.exchange_rate ?? settings?.exchange_rate;
+        const parsedRate = remoteRate ? Number(remoteRate) : (localRate ? parseFloat(localRate) : 36.80);
+
         set({
             tableServiceEnabled: settings?.enable_table_service || false,
             mapBackgroundUrl: settings?.map_background_url || null,
@@ -519,9 +564,15 @@ export const usePosStore = create<PosState>((set, get) => ({
             themeMode: settings?.theme_mode || 'light',
             language: localLang || settings?.language || 'es',
             currency: settings?.currency || 'USD',
+            secondaryCurrency: cs?.secondary_currency || settings?.secondary_currency || 'USD',
+            enableSecondaryCurrency: cs?.enable_secondary_currency ?? settings?.enable_secondary_currency ?? false,
             usdExchangeRate: parsedRate,
+            enableTax: ts?.enable_tax ?? settings?.enable_tax ?? true,
+            taxRate: ts?.tax_rate ?? settings?.tax_rate ?? 15,
+            pricesIncludeTax: ts?.prices_include_tax ?? settings?.prices_include_tax ?? false,
             tables: tablesData || [],
             zones: zonesData || [],
+            zoneBackgrounds: zoneBg,
             printers: printers || [],
             receiptTemplate: settings?.receipt_template || get().receiptTemplate,
             attendanceSettings: settings?.attendance_settings || get().attendanceSettings,
@@ -621,12 +672,24 @@ export const usePosStore = create<PosState>((set, get) => ({
             const lineItemsToInsert = cart.map(cartItem => {
                 let unitPrice = cartItem.item.base_price;
 
+                const selectedTipo = cartItem.selectedOptions?.['Tipo'] || cartItem.selectedOptions?.['tipo'];
+                const selectedSize = cartItem.selectedOptions?.['Tamaño'] || cartItem.selectedOptions?.['tamaño'] || cartItem.selectedOptions?.['size'];
+                const comboPrice = resolveCombinationPrice(cartItem.item.combination_prices, cartItem.item.base_price, selectedTipo, selectedSize);
+                const hasComboPrice = comboPrice !== cartItem.item.base_price;
+                if (hasComboPrice) {
+                    unitPrice = comboPrice;
+                }
+
                 // Add main item option modifiers
                 if (cartItem.selectedOptions && cartItem.item.options) {
                     cartItem.item.options.forEach((opt: any) => {
+                        const optLower = (opt.name || '').toLowerCase();
+                        if (hasComboPrice && (optLower === 'tipo' || optLower === 'tamaño' || optLower === 'tamano' || optLower === 'size')) {
+                            return;
+                        }
                         const selectedChoice = cartItem.selectedOptions?.[opt.name];
                         if (selectedChoice) {
-                            const choiceDef = (opt.choices || []).find((c: any) => c.name === selectedChoice);
+                            const choiceDef = (opt.choices || []).find((c: any) => (typeof c === 'object' ? c.name : c) === selectedChoice);
                             if (choiceDef && choiceDef.price_modifier) unitPrice += choiceDef.price_modifier;
                         }
                     });
@@ -639,13 +702,24 @@ export const usePosStore = create<PosState>((set, get) => ({
 
                 // Add combo sub-items extras & option modifiers
                 (cartItem.sub_items || []).forEach(sub => {
-                    let subUnitPrice = 0;
+                    let subUnitPrice = sub.item.base_price || 0;
+                    const subTipo = sub.selectedOptions?.['Tipo'] || sub.selectedOptions?.['tipo'];
+                    const subSize = sub.selectedOptions?.['Tamaño'] || sub.selectedOptions?.['tamaño'] || sub.selectedOptions?.['size'];
+                    const subComboPrice = resolveCombinationPrice(sub.item.combination_prices, sub.item.base_price, subTipo, subSize);
+                    const hasSubCombo = subComboPrice !== sub.item.base_price;
+                    if (hasSubCombo) {
+                        subUnitPrice = subComboPrice;
+                    }
 
                     if (sub.selectedOptions && sub.item.options) {
                         sub.item.options.forEach((opt: any) => {
+                            const optLower = (opt.name || '').toLowerCase();
+                            if (hasSubCombo && (optLower === 'tipo' || optLower === 'tamaño' || optLower === 'tamano' || optLower === 'size')) {
+                                return;
+                            }
                             const selectedChoice = sub.selectedOptions?.[opt.name];
                             if (selectedChoice) {
-                                const choiceDef = (opt.choices || []).find((c: any) => c.name === selectedChoice);
+                                const choiceDef = (opt.choices || []).find((c: any) => (typeof c === 'object' ? c.name : c) === selectedChoice);
                                 if (choiceDef && choiceDef.price_modifier) subUnitPrice += choiceDef.price_modifier;
                             }
                         });
@@ -692,9 +766,20 @@ export const usePosStore = create<PosState>((set, get) => ({
             // Calculate Order-Level Totals (DGI Nicaragua LCT Art. 122 compliance)
             const subtotalBruto = lineItemsToInsert.reduce((acc, c) => acc + (c.subtotal_bruto || 0), 0);
             const totalDescuentos = lineItemsToInsert.reduce((acc, c) => acc + (c.discount_amount || 0), 0);
-            const baseImponibleIva = subtotalBruto - totalDescuentos;
-            const montoIva = baseImponibleIva * 0.15; // 15% IVA Tax
-            const totalNeto = baseImponibleIva + montoIva;
+            const baseImponibleIva = Math.max(0, subtotalBruto - totalDescuentos);
+
+            const { enableTax, taxRate, pricesIncludeTax } = get();
+            let montoIva = 0;
+            let totalNeto = baseImponibleIva;
+
+            if (enableTax !== false && !pricesIncludeTax) {
+                const effectiveTaxRate = (typeof taxRate === 'number' ? taxRate : 15) / 100;
+                montoIva = baseImponibleIva * effectiveTaxRate;
+                totalNeto = baseImponibleIva + montoIva;
+            } else {
+                montoIva = 0;
+                totalNeto = baseImponibleIva;
+            }
 
             // Extract unique promotions used in this order
             const appliedPromotions = [...new Set(lineItemsToInsert.map(c => c.promotion_id).filter(Boolean))];
@@ -885,12 +970,32 @@ export const usePosStore = create<PosState>((set, get) => ({
             const { data: promos } = await supabase.from('promotions').select('*').eq('active', true).order('priority', { ascending: false });
             const { data: targets } = await supabase.from('promotion_targets').select('*');
 
+            const processItems = (rawList: any[] | null | undefined): MenuItem[] => (rawList || []).map((i: any) => {
+                const comboOption = (i.options || []).find((o: any) => o.name === '__combination_prices');
+                return {
+                    ...i,
+                    combination_prices: i.combination_prices || comboOption?.prices || null,
+                    options: (i.options || []).filter((o: any) => o.name !== '__combination_prices')
+                };
+            });
+
+            const processedRecipes: Recipe[] = (recipeData || []).map((r: any) => {
+                const dec = decodeRecipeVariation(r);
+                return {
+                    parent_item_id: r.parent_item_id,
+                    child_item_id: r.child_item_id,
+                    quantity: r.quantity,
+                    type_name: dec.type_name,
+                    size_name: dec.size_name
+                };
+            });
+
             set({
                 categories: catData || [],
                 itemCategoryLinks: linkData || [],
-                items: itemData || [],
-                allIngredients: ingredientData || [],
-                recipes: recipeData || [],
+                items: processItems(itemData),
+                allIngredients: processItems(ingredientData),
+                recipes: processedRecipes,
                 availablePromotions: promos || [],
                 promotionTargets: targets || [],
                 isLoading: false
@@ -967,27 +1072,67 @@ export const usePosStore = create<PosState>((set, get) => ({
             .select('*, child_item:items!child_item_id(*)')
             .eq('parent_item_id', product.id);
 
+        const tipoKey = Object.keys(selectedOptions).find(k => 
+            k.toLowerCase() === 'tipo' || 
+            k.toLowerCase().includes('tipo')
+        );
+        const selectedTipo = tipoKey ? selectedOptions[tipoKey] : null;
+
         const sizeKey = Object.keys(selectedOptions).find(k => 
             k.toLowerCase().includes('size') || 
             k.toLowerCase().includes('tamaño') || 
+            k.toLowerCase().includes('tamano') || 
             k.toLowerCase().includes('porcion') || 
             k.toLowerCase().includes('porción')
         );
         let selectedSize = sizeKey ? selectedOptions[sizeKey] : null;
-        if (!selectedSize) {
-            const matchingVal = Object.values(selectedOptions).find(val => (recipeData || []).some((r: any) => r.size_name && r.size_name.toLowerCase() === String(val).toLowerCase()));
-            if (matchingVal) selectedSize = String(matchingVal);
-        }
-        const normalizedSelectedSize = selectedSize ? selectedSize.toLowerCase() : null;
 
-        let filteredRecipeData = (recipeData || []).filter((r: any) => (r.size_name ? r.size_name.toLowerCase() : null) === normalizedSelectedSize);
-        if (filteredRecipeData.length === 0) {
-            filteredRecipeData = (recipeData || []).filter((r: any) => !r.size_name);
-        }
+        const filterRecipes = (rawList: any[], targetTipo: string | null, targetSize: string | null) => {
+            const decoded = (rawList || []).map((r: any) => {
+                const dec = decodeRecipeVariation(r);
+                return {
+                    ...r,
+                    type_name: dec.type_name,
+                    size_name: dec.size_name
+                };
+            });
+
+            const normTipo = targetTipo ? targetTipo.trim().toLowerCase() : null;
+            const normSize = targetSize ? targetSize.trim().toLowerCase() : null;
+
+            if (normTipo && normSize) {
+                const exact = decoded.filter((r: any) => 
+                    (r.type_name ? r.type_name.toLowerCase() : null) === normTipo &&
+                    (r.size_name ? r.size_name.toLowerCase() : null) === normSize
+                );
+                if (exact.length > 0) return exact;
+            }
+
+            if (normTipo) {
+                const matchTipo = decoded.filter((r: any) => 
+                    (r.type_name ? r.type_name.toLowerCase() : null) === normTipo && !r.size_name
+                );
+                if (matchTipo.length > 0) return matchTipo;
+            }
+
+            if (normSize) {
+                const matchSize = decoded.filter((r: any) => 
+                    !r.type_name && (r.size_name ? r.size_name.toLowerCase() : null) === normSize
+                );
+                if (matchSize.length > 0) return matchSize;
+            }
+
+            const base = decoded.filter((r: any) => !r.type_name && !r.size_name);
+            if (base.length > 0) return base;
+
+            return decoded;
+        };
+
+        const filteredRecipeData = filterRecipes(recipeData || [], selectedTipo, selectedSize);
 
         // Keep only the fields React Native / Hermes needs to display and calculate.
         // Storing full Supabase row objects causes JSON.stringify to OOM-crash in Hermes.
-        const slimProduct: MenuItem = { id: product.id, name: product.name, base_price: product.base_price, type: product.type, options: product.options };
+        const slimProduct: MenuItem = { id: product.id, name: product.name, base_price: product.base_price, type: product.type, options: product.options, combination_prices: product.combination_prices };
 
         let sub_items: CartItem[] = [];
         let ingredients: CartItemIngredient[] = [];
@@ -995,17 +1140,14 @@ export const usePosStore = create<PosState>((set, get) => ({
         if (product.type === 'combo') {
             for (const r of filteredRecipeData) {
                 const subProduct = r.child_item;
-                const slimSubProduct: MenuItem = { id: subProduct.id, name: subProduct.name, base_price: subProduct.base_price, type: subProduct.type, options: subProduct.options };
+                const slimSubProduct: MenuItem = { id: subProduct.id, name: subProduct.name, base_price: subProduct.base_price, type: subProduct.type, options: subProduct.options, combination_prices: subProduct.combination_prices };
 
                 const { data: subRecipeData } = await supabase
                     .from('recipes')
                     .select('*, child_item:items!child_item_id(*)')
                     .eq('parent_item_id', subProduct.id);
 
-                let filteredSubRecipeData = (subRecipeData || []).filter((sr: any) => (sr.size_name ? sr.size_name.toLowerCase() : null) === normalizedSelectedSize);
-                if (filteredSubRecipeData.length === 0) {
-                    filteredSubRecipeData = (subRecipeData || []).filter((sr: any) => !sr.size_name);
-                }
+                const filteredSubRecipeData = filterRecipes(subRecipeData || [], selectedTipo, selectedSize);
 
                 const subIngredients: CartItemIngredient[] = filteredSubRecipeData.map((sr: any) => ({
                     instance_id: Math.random().toString(36).substring(2, 11) + Date.now().toString(36),
@@ -1305,11 +1447,39 @@ export const usePosStore = create<PosState>((set, get) => ({
 
         let newCi = JSON.parse(JSON.stringify(oldCi));
 
-        const getNewIngredients = (item_id: string, selectedSize: string | null, oldIngredients: any[]) => {
-            const normalizedSelectedSize = selectedSize ? selectedSize.toLowerCase() : null;
+        const getNewIngredients = (item_id: string, selectedTipo: string | null, selectedSize: string | null, oldIngredients: any[]) => {
+            const normTipo = selectedTipo ? selectedTipo.trim().toLowerCase() : null;
+            const normSize = selectedSize ? selectedSize.trim().toLowerCase() : null;
             const subRecipes = state.recipes.filter((r: any) => r.parent_item_id === item_id);
-            let filteredSubRecipes = subRecipes.filter((r: any) => (r.size_name ? r.size_name.toLowerCase() : null) === normalizedSelectedSize);
-            if (filteredSubRecipes.length === 0) filteredSubRecipes = subRecipes.filter((r: any) => !r.size_name);
+
+            let filteredSubRecipes: any[] = [];
+            // 1. Exact match for both Tipo & Tamaño
+            if (normTipo && normSize) {
+                filteredSubRecipes = subRecipes.filter((r: any) => 
+                    (r.type_name ? r.type_name.toLowerCase() : null) === normTipo &&
+                    (r.size_name ? r.size_name.toLowerCase() : null) === normSize
+                );
+            }
+            // 2. Match Tipo only
+            if (filteredSubRecipes.length === 0 && normTipo) {
+                filteredSubRecipes = subRecipes.filter((r: any) => 
+                    (r.type_name ? r.type_name.toLowerCase() : null) === normTipo && !r.size_name
+                );
+            }
+            // 3. Match Tamaño only
+            if (filteredSubRecipes.length === 0 && normSize) {
+                filteredSubRecipes = subRecipes.filter((r: any) => 
+                    !r.type_name && (r.size_name ? r.size_name.toLowerCase() : null) === normSize
+                );
+            }
+            // 4. Base General
+            if (filteredSubRecipes.length === 0) {
+                filteredSubRecipes = subRecipes.filter((r: any) => !r.type_name && !r.size_name);
+            }
+            // 5. Fallback all
+            if (filteredSubRecipes.length === 0) {
+                filteredSubRecipes = subRecipes;
+            }
 
             const newIngredients = filteredSubRecipes.map((r: any) => {
                 const child = state.allIngredients.find(i => i.id === r.child_item_id) || state.items.find(i => i.id === r.child_item_id);
@@ -1338,49 +1508,58 @@ export const usePosStore = create<PosState>((set, get) => ({
         if (sub_cart_id && newCi.sub_items) {
             newCi.sub_items = newCi.sub_items.map((sub: any) => {
                 if (sub.cart_id === sub_cart_id) {
+                    const subTipoKey = Object.keys(options).find(k => 
+                        k.toLowerCase() === 'tipo' || 
+                        k.toLowerCase().includes('tipo')
+                    );
+                    const subTipo = subTipoKey ? options[subTipoKey] : null;
+
                     const subSizeKey = Object.keys(options).find(k => 
                         k.toLowerCase().includes('size') || 
                         k.toLowerCase().includes('tamaño') || 
+                        k.toLowerCase().includes('tamano') || 
                         k.toLowerCase().includes('porcion') || 
                         k.toLowerCase().includes('porción')
                     );
-                    let subSize = subSizeKey ? options[subSizeKey] : null;
-                    if (!subSize) {
-                        const matchingVal = Object.values(options).find(val => state.recipes.some((r: any) => r.parent_item_id === sub.item.id && r.size_name && r.size_name.toLowerCase() === String(val).toLowerCase()));
-                        if (matchingVal) subSize = String(matchingVal);
-                    }
+                    const subSize = subSizeKey ? options[subSizeKey] : null;
+
                     sub.selectedOptions = options;
-                    sub.ingredients = getNewIngredients(sub.item.id, subSize, sub.ingredients);
+                    sub.ingredients = getNewIngredients(sub.item.id, subTipo, subSize, sub.ingredients);
                 }
                 return sub;
             });
         } else {
             newCi.selectedOptions = options;
+            const tipoKey = Object.keys(options).find(k => 
+                k.toLowerCase() === 'tipo' || 
+                k.toLowerCase().includes('tipo')
+            );
+            const selectedTipo = tipoKey ? options[tipoKey] : null;
+
             const sizeKey = Object.keys(options).find(k => 
                 k.toLowerCase().includes('size') || 
                 k.toLowerCase().includes('tamaño') || 
+                k.toLowerCase().includes('tamano') || 
                 k.toLowerCase().includes('porcion') || 
                 k.toLowerCase().includes('porción')
             );
-            let selectedSize = sizeKey ? options[sizeKey] : null;
-            if (!selectedSize) {
-                const matchingVal = Object.values(options).find(val => state.recipes.some((r: any) => r.parent_item_id === newCi.item.id && r.size_name && r.size_name.toLowerCase() === String(val).toLowerCase()));
-                if (matchingVal) selectedSize = String(matchingVal);
-            }
+            const selectedSize = sizeKey ? options[sizeKey] : null;
 
             if (newCi.item.type === 'combo') {
                 newCi.sub_items = newCi.sub_items?.map((sub: any) => {
-                    sub.ingredients = getNewIngredients(sub.item.id, selectedSize, sub.ingredients);
+                    sub.ingredients = getNewIngredients(sub.item.id, selectedTipo, selectedSize, sub.ingredients);
                     return sub;
                 });
             } else {
-                newCi.ingredients = getNewIngredients(newCi.item.id, selectedSize, newCi.ingredients);
+                newCi.ingredients = getNewIngredients(newCi.item.id, selectedTipo, selectedSize, newCi.ingredients);
             }
         }
 
         set(s => ({
             cart: s.cart.map(c => c.cart_id === cart_id ? newCi : c)
         }));
+
+        get().recalculateCartMath();
 
         (async () => {
             await refundInventoryForCartItem(oldCi, oldCi.quantity, get, set);

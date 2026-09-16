@@ -24,6 +24,7 @@ export interface MenuItem {
   image_url?: string | null;
   tags?: string[] | null;
   options?: ItemOption[] | null;
+  combination_prices?: Record<string, number> | null;
 }
 
 /** An option group on a menu item (e.g., "Size", "Meat Term"). */
@@ -46,6 +47,7 @@ export interface Recipe {
   parent_item_id: string;
   child_item_id: string;
   quantity: number;
+  type_name?: string | null;
   size_name?: string | null;
 }
 

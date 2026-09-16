@@ -16,7 +16,7 @@ interface TablesScreenProps {
 
 export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight }: TablesScreenProps) {
   const {
-    setScreen, mapBackgroundUrl, tables, zones, items, ordersList,
+    setScreen, mapBackgroundUrl, tables, zones, zoneBackgrounds, items, ordersList,
     updateTableStatus, reserveTable, startOrder, loadOrder, currency
   } = usePosStore();
 
@@ -26,6 +26,11 @@ export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight 
   const [showReservationForm, setShowReservationForm] = useState(false);
   const [reservationName, setReservationName] = useState('');
   const [reservationDate, setReservationDate] = useState('');
+
+  const activeZoneObj = zones.find(z => z.id === floorZoneFilter || z.name === floorZoneFilter);
+  const activeZoneBg = (floorZoneFilter !== 'all' && activeZoneObj)
+    ? (zoneBackgrounds?.[activeZoneObj.id] || zoneBackgrounds?.[activeZoneObj.name] || (activeZoneObj as any).background_url || mapBackgroundUrl)
+    : mapBackgroundUrl;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: bgStr }}>
@@ -72,10 +77,10 @@ export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight 
           <ScrollView horizontal showsHorizontalScrollIndicator={true} style={{ flex: 1 }}>
             <ScrollView showsVerticalScrollIndicator={true} style={{ flex: 1 }}>
               <View style={{ width: mapWidth, height: mapHeight, position: 'relative' }}>
-                {mapBackgroundUrl && (
+                {activeZoneBg && (
                   <Image
-                    source={{ uri: mapBackgroundUrl }}
-                    style={{ width: '100%', height: '100%', position: 'absolute', opacity: 0.5 }}
+                    source={{ uri: activeZoneBg }}
+                    style={{ width: '100%', height: '100%', position: 'absolute', opacity: 0.65 }}
                     resizeMode="cover"
                   />
                 )}

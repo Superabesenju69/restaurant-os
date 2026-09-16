@@ -37,6 +37,8 @@ export interface PrintJob {
     subtotal?: number;
     tax?: number;
     discount?: number;
+    tip?: number;
+    exchange_rate?: number;
     payments?: { method: string; amount: number; reference_id?: string }[];
     change?: number;
     receiptTemplate?: any;
@@ -161,12 +163,24 @@ export const buildReceiptBuffer = (job: PrintJob): Buffer => {
             const valStr = `$${job.tax.toFixed(2)}`;
             commands += `IVA (15%):`.padEnd(lineLength - valStr.length, ' ') + valStr + NL;
         }
+        if (job.tip !== undefined && job.tip > 0) {
+            const valStr = `$${job.tip.toFixed(2)}`;
+            commands += `Propina:`.padEnd(lineLength - valStr.length, ' ') + valStr + NL;
+        }
         commands += `${divider}${NL}`;
         
         commands += CMD_TEXT_DOUBLE_HEIGHT;
         const totalValStr = `$${job.total.toFixed(2)}`;
         commands += `Total:`.padEnd(lineLength - totalValStr.length, ' ') + totalValStr + NL;
         commands += CMD_TEXT_NORMAL;
+
+        // Dual currency secondary line if enabled
+        if (template?.show_dual_currency && (job.exchange_rate || template?.exchange_rate)) {
+            const rate = job.exchange_rate || template?.exchange_rate || 36.80;
+            const secTotal = (job.total / rate).toFixed(2);
+            const secValStr = `$${secTotal} USD`;
+            commands += `Total USD (T.C. ${rate.toFixed(2)}):`.padEnd(lineLength - secValStr.length, ' ') + secValStr + NL;
+        }
 
         // Payment breakdown
         if (job.payments && job.payments.length > 0) {
