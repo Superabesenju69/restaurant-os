@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    --color-primary-50: #f0fdfa;
+    --color-primary-100: #ccfbf1;
+    --color-primary-200: #99f6e4;
+    --color-primary-300: #5eead4;
+    --color-primary-400: #2dd4bf;
+    --color-primary-500: #14b8a6;
+    --color-primary-600: #0d9488;
+    --color-primary-700: #0f766e;
+    --color-primary-800: #115e59;
+    --color-primary-900: #134e4a;
+    --color-primary-950: #042f2e;
+}
+
+.theme-rose {
+    --color-primary-50: #fff1f2;
+    --color-primary-100: #ffe4e6;
+    --color-primary-200: #fecdd3;
+    --color-primary-300: #fda4af;
+    --color-primary-400: #fb7185;
+    --color-primary-500: #f43f5e;
+    --color-primary-600: #e11d48;
+    --color-primary-700: #be123c;
+    --color-primary-800: #9f1239;
+    --color-primary-900: #881337;
+    --color-primary-950: #4c0519;
+}
+
+.theme-amber {
+    --color-primary-50: #fffbeb;
+    --color-primary-100: #fef3c7;
+    --color-primary-200: #fde68a;
+    --color-primary-300: #fcd34d;
+    --color-primary-400: #fbbf24;
+    --color-primary-500: #f59e0b;
+    --color-primary-600: #d97706;
+    --color-primary-700: #b45309;
+    --color-primary-800: #92400e;
+    --color-primary-900: #78350f;
+    --color-primary-950: #451a03;
+}
+
+.theme-indigo {
+    --color-primary-50: #eef2ff;
+    --color-primary-100: #e0e7ff;
+    --color-primary-200: #c7d2fe;
+    --color-primary-300: #a5b4fc;
+    --color-primary-400: #818cf8;
+    --color-primary-500: #6366f1;
+    --color-primary-600: #4f46e5;
+    --color-primary-700: #4338ca;
+    --color-primary-800: #3730a3;
+    --color-primary-900: #312e81;
+    --color-primary-950: #1e1b4b;
+}

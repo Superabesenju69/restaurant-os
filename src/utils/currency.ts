@@ -1,0 +1,56 @@
+export const CURRENCIES: Record<string, { symbol: string; name: string; locale: string }> = {
+    C: { symbol: 'C$', name: 'Cordoba Oro', locale: 'es-NI' },
+    NIO: { symbol: 'C$', name: 'Nicaraguan Cordoba', locale: 'es-NI' },
+    USD: { symbol: '$', name: 'US Dollar', locale: 'en-US' },
+    EUR: { symbol: '€', name: 'Euro', locale: 'de-DE' },
+    GBP: { symbol: '£', name: 'British Pound', locale: 'en-GB' },
+    JPY: { symbol: '¥', name: 'Japanese Yen', locale: 'ja-JP' },
+    MXN: { symbol: '$', name: 'Mexican Peso', locale: 'es-MX' },
+    CAD: { symbol: 'CA$', name: 'Canadian Dollar', locale: 'en-CA' },
+    BRL: { symbol: 'R$', name: 'Brazilian Real', locale: 'pt-BR' },
+    ARS: { symbol: 'ARS$', name: 'Argentine Peso', locale: 'es-AR' },
+    COP: { symbol: 'COL$', name: 'Colombian Peso', locale: 'es-CO' },
+    CHF: { symbol: 'CHF', name: 'Swiss Franc', locale: 'de-CH' },
+    CNY: { symbol: '¥', name: 'Chinese Yuan', locale: 'zh-CN' },
+    INR: { symbol: '₹', name: 'Indian Rupee', locale: 'hi-IN' },
+    AUD: { symbol: 'A$', name: 'Australian Dollar', locale: 'en-AU' },
+    ZAR: { symbol: 'R', name: 'South African Rand', locale: 'en-ZA' },
+    RUB: { symbol: '₽', name: 'Russian Ruble', locale: 'ru-RU' },
+    KRW: { symbol: '₩', name: 'South Korean Won', locale: 'ko-KR' },
+    TRY: { symbol: '₺', name: 'Turkish Lira', locale: 'tr-TR' },
+    SEK: { symbol: 'kr', name: 'Swedish Krona', locale: 'sv-SE' },
+    NOK: { symbol: 'kr', name: 'Norwegian Krone', locale: 'nb-NO' },
+    DKK: { symbol: 'kr', name: 'Danish Krone', locale: 'da-DK' },
+    PLN: { symbol: 'zł', name: 'Polish Zloty', locale: 'pl-PL' },
+    NZD: { symbol: 'NZ$', name: 'New Zealand Dollar', locale: 'en-NZ' },
+    HKD: { symbol: 'HK$', name: 'Hong Kong Dollar', locale: 'zh-HK' },
+    SGD: { symbol: 'S$', name: 'Singapore Dollar', locale: 'en-SG' },
+    MYR: { symbol: 'RM', name: 'Malaysian Ringgit', locale: 'ms-MY' },
+    THB: { symbol: '฿', name: 'Thai Baht', locale: 'th-TH' },
+    IDR: { symbol: 'Rp', name: 'Indonesian Rupiah', locale: 'id-ID' },
+    PHP: { symbol: '₱', name: 'Philippine Peso', locale: 'en-PH' },
+    VND: { symbol: '₫', name: 'Vietnamese Dong', locale: 'vi-VN' },
+    EGP: { symbol: 'E£', name: 'Egyptian Pound', locale: 'ar-EG' },
+    NGN: { symbol: '₦', name: 'Nigerian Naira', locale: 'en-NG' },
+    KES: { symbol: 'KSh', name: 'Kenyan Shilling', locale: 'en-KE' },
+    CLP: { symbol: 'CLP$', name: 'Chilean Peso', locale: 'es-CL' },
+    PEN: { symbol: 'S/', name: 'Peruvian Sol', locale: 'es-PE' },
+    UYU: { symbol: '$U', name: 'Uruguayan Peso', locale: 'es-UY' },
+    CRC: { symbol: '₡', name: 'Costa Rican Colon', locale: 'es-CR' },
+    GTQ: { symbol: 'Q', name: 'Guatemalan Quetzal', locale: 'es-GT' },
+    HNL: { symbol: 'L', name: 'Honduran Lempira', locale: 'es-HN' },
+    ILS: { symbol: '₪', name: 'Israeli Shekel', locale: 'he-IL' },
+    AED: { symbol: 'د.إ', name: 'UAE Dirham', locale: 'ar-AE' },
+    SAR: { symbol: '﷼', name: 'Saudi Riyal', locale: 'ar-SA' },
+    TWD: { symbol: 'NT$', name: 'Taiwan Dollar', locale: 'zh-TW' },
+    PKR: { symbol: '₨', name: 'Pakistani Rupee', locale: 'en-PK' },
+    BDT: { symbol: '৳', name: 'Bangladeshi Taka', locale: 'bn-BD' },
+};
+
+export function formatCurrency(amount: number, currencyCode: string = 'USD'): string {
+    const cur = currencyCode || 'USD';
+    const info = CURRENCIES[cur] || CURRENCIES.USD;
+    
+    // Simplistic formatting to guarantee `$` or `C$` followed by amount for React Native (Intl usually unavailable or inconsistent in basic JSCore)
+    return `${info.symbol}${amount.toFixed(2)}`;
+}
