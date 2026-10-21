@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { StatusBar } from 'expo-status-bar';
 import { View, Text, SafeAreaView, TouchableOpacity, ScrollView, useWindowDimensions } from 'react-native';
 import { usePosStore } from "../store/posStore";
@@ -14,23 +14,27 @@ export default function ServingScreen({ bgStr, language }: ServingScreenProps) {
   const { width } = useWindowDimensions();
   const cardWidth = width < 600 ? width - 40 : width < 900 ? (width - 56) / 2 : (width - 72) / 3;
 
-  const {
-    setScreen, ordersList, tables, currentPosUser
-  } = usePosStore();
+  const setScreen = usePosStore(s => s.setScreen);
+  const ordersList = usePosStore(s => s.ordersList);
+  const tables = usePosStore(s => s.tables);
+  const currentPosUser = usePosStore(s => s.currentPosUser);
 
   // Collect all active expediter batches for the current user's orders
-  const activeBatches: any[] = [];
-  ordersList.forEach((order: Order) => {
-    if (order.user_id !== currentPosUser?.id && currentPosUser?.role !== 'admin') return;
-    
-    const batches = (order.kitchen_tickets || []).filter((t: KitchenTicket) => t.is_expediter && t.status !== 'archived');
-    batches.forEach((b: KitchenTicket) => {
-      activeBatches.push({ ...b, _order_number: order.order_number, _table_id: order.table_id, _type: order.type, _customer_name: order.customer_name });
+  const activeBatches = useMemo(() => {
+    const batchesOut: any[] = [];
+    ordersList.forEach((order: Order) => {
+      if (order.user_id !== currentPosUser?.id && currentPosUser?.role !== 'admin') return;
+      
+      const batches = (order.kitchen_tickets || []).filter((t: KitchenTicket) => t.is_expediter && t.status !== 'archived');
+      batches.forEach((b: KitchenTicket) => {
+        batchesOut.push({ ...b, _order_number: order.order_number, _table_id: order.table_id, _type: order.type, _customer_name: order.customer_name });
+      });
     });
-  });
 
-  // Sort oldest first
-  activeBatches.sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    // Sort oldest first
+    batchesOut.sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    return batchesOut;
+  }, [ordersList, currentPosUser]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: bgStr }}>

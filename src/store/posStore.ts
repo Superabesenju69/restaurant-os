@@ -1,5 +1,6 @@
 import { Alert } from 'react-native';
 import { create } from 'zustand';
+import { subscribeWithSelector } from 'zustand/middleware';
 import { supabase, setTenantIdHeader } from '../utils/supabase';
 import { buildReceiptBuffer, printToNetwork } from '../utils/printerEngine';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -30,7 +31,7 @@ import type {
 // Re-export cart types so existing imports from posStore keep working
 export type { CartItem, CartItemIngredient };
 
-interface PosState {
+export interface PosState {
     screen: ScreenName;
     ordersList: Order[];
     categories: Category[];
@@ -49,9 +50,6 @@ interface PosState {
     availablePromotions: Promotion[];
     promotionTargets: PromotionTarget[];
     appliedGlobalPromotionIds: string[];
-    applyManualPromotion: (promoId: string) => void;
-    removeManualPromotion: (promoId: string) => void;
-    recalculateCartMath: () => void;
 
     // Table service & Settings
     tableServiceEnabled: boolean;
@@ -59,7 +57,6 @@ interface PosState {
     themeColor: string;
     themeMode: string;
     language: string;
-    setLanguage: (lang: string) => void;
     currency: string;
     secondaryCurrency: string;
     enableSecondaryCurrency: boolean;
@@ -71,8 +68,6 @@ interface PosState {
     zoneBackgrounds: Record<string, string>;
     printers: Printer[];
     localReceiptPrinterId: string | null;
-    setLocalReceiptPrinterId: (id: string | null) => void;
-    setThemeColor: (color: string) => void;
     receiptTemplate: any;
     attendanceSettings: any;
     activeOrderId: string | null;
@@ -85,11 +80,28 @@ interface PosState {
     tenantId: string | null;
     tenantName: string | null;
     tenantSubdomain: string | null;
-    setTenant: (id: string, name: string, subdomain: string) => Promise<void>;
-    clearTenant: () => Promise<void>;
 
     // Auth
     currentPosUser: PosUser | null;
+
+    // Cash Drawer Turnos State
+    activeCashShift: CashShift | null;
+    showCashRegisterModal: boolean;
+    usdExchangeRate: number;
+}
+
+export interface PosActions {
+    applyManualPromotion: (promoId: string) => void;
+    removeManualPromotion: (promoId: string) => void;
+    recalculateCartMath: () => void;
+
+    setLanguage: (lang: string) => void;
+    setLocalReceiptPrinterId: (id: string | null) => void;
+    setThemeColor: (color: string) => void;
+
+    setTenant: (id: string, name: string, subdomain: string) => Promise<void>;
+    clearTenant: () => Promise<void>;
+
     posLogin: (user: PosUser) => void;
     posLogout: () => void;
 
@@ -128,18 +140,17 @@ interface PosState {
     openCashDrawer: () => Promise<{ success: boolean; error?: string }>;
     setupSubscriptions: () => void;
 
-    // Cash Drawer Turnos State & Actions
-    activeCashShift: CashShift | null;
-    showCashRegisterModal: boolean;
+    // Cash Drawer Turnos Actions
     setShowCashRegisterModal: (show: boolean) => void;
     fetchActiveCashShift: () => Promise<void>;
     openCashShift: (startingCash: number) => Promise<boolean>;
     closeCashShift: (actualCash: number, notes?: string | null) => Promise<boolean>;
     addCashAdjustment: (type: 'cash_in' | 'cash_out', amount: number, reason?: string | null) => Promise<boolean>;
     fetchCashShiftSummary: (shiftId: string) => Promise<{ cashSales: number; adjustmentsIn: number; adjustmentsOut: number } | null>;
-    usdExchangeRate: number;
     setUsdExchangeRate: (rate: number) => Promise<void>;
 }
+
+export type PosStore = PosState & PosActions;
 
 // Guard to prevent concurrent saveOrder calls that cause Hermes OOM during JSON.stringify
 let _saveInProgress = false;
@@ -151,7 +162,8 @@ const deductInventoryForCartItem = deductInventoryForCartItemImpl;
 const refundInventoryForCartItem = refundInventoryForCartItemImpl;
 const adjustSingleIngredientStock = adjustSingleIngredientStockImpl;
 
-export const usePosStore = create<PosState>((set, get) => ({
+export const usePosStore = create<PosStore>()(
+    subscribeWithSelector((set, get) => ({
     screen: 'home',
     ordersList: [],
     categories: [],
@@ -1070,10 +1082,27 @@ export const usePosStore = create<PosState>((set, get) => ({
 
 
     addToCart: async (product, selectedOptions = {}, extras = [], initialQuantity = 1) => {
-        const { data: recipeData } = await supabase
-            .from('recipes')
-            .select('*, child_item:items!child_item_id(*)')
-            .eq('parent_item_id', product.id);
+        const { recipes: memoryRecipes, items: memoryItems, allIngredients: memoryIngredients } = get();
+        const pool = [...memoryItems, ...memoryIngredients];
+
+        const resolveRecipesForParent = async (parentId: string) => {
+            if (memoryRecipes.length > 0) {
+                return memoryRecipes
+                    .filter(r => r.parent_item_id === parentId)
+                    .map(r => ({
+                        ...r,
+                        child_item: r.child_item || pool.find(i => i.id === r.child_item_id),
+                    }))
+                    .filter(r => Boolean(r.child_item));
+            }
+            const { data } = await supabase
+                .from('recipes')
+                .select('*, child_item:items!child_item_id(*)')
+                .eq('parent_item_id', parentId);
+            return data || [];
+        };
+
+        const recipeData = await resolveRecipesForParent(product.id);
 
         const tipoKey = Object.keys(selectedOptions).find(k => 
             k.toLowerCase() === 'tipo' || 
@@ -1110,6 +1139,7 @@ export const usePosStore = create<PosState>((set, get) => ({
         if (product.type === 'combo') {
             for (const r of filteredRecipeData) {
                 const subProduct = r.child_item;
+                if (!subProduct) continue;
                 const slimSubProduct: MenuItem = { 
                     id: subProduct.id, 
                     name: subProduct.name, 
@@ -1120,22 +1150,21 @@ export const usePosStore = create<PosState>((set, get) => ({
                     combination_prices: subProduct.combination_prices 
                 };
 
-                const { data: subRecipeData } = await supabase
-                    .from('recipes')
-                    .select('*, child_item:items!child_item_id(*)')
-                    .eq('parent_item_id', subProduct.id);
+                const subRecipeData = await resolveRecipesForParent(subProduct.id);
 
                 const filteredSubRecipeData = filterRecipesByVariation(subRecipeData || [], selectedTipo, selectedSize);
 
-                const subIngredients: CartItemIngredient[] = filteredSubRecipeData.map((sr: any) => ({
-                    instance_id: Math.random().toString(36).substring(2, 11) + Date.now().toString(36),
-                    id: sr.child_item.id,
-                    name: sr.child_item.name,
-                    base_price: sr.child_item.base_price,
-                    recipe_quantity: sr.quantity,
-                    removed: false,
-                    extra: false
-                })) || [];
+                const subIngredients: CartItemIngredient[] = filteredSubRecipeData
+                    .filter((sr: any) => Boolean(sr.child_item))
+                    .map((sr: any) => ({
+                        instance_id: Math.random().toString(36).substring(2, 11) + Date.now().toString(36),
+                        id: sr.child_item.id,
+                        name: sr.child_item.name,
+                        base_price: sr.child_item.base_price,
+                        recipe_quantity: sr.quantity,
+                        removed: false,
+                        extra: false
+                    })) || [];
 
                 const defaultSubOptions: Record<string, string> = {};
                 (subProduct.options || []).forEach((opt: any) => {
@@ -1154,15 +1183,17 @@ export const usePosStore = create<PosState>((set, get) => ({
                 });
             }
         } else {
-            ingredients = filteredRecipeData.map((r: any) => ({
-                instance_id: Math.random().toString(36).substring(2, 11) + Date.now().toString(36),
-                id: r.child_item.id,
-                name: r.child_item.name,
-                base_price: r.child_item.base_price,
-                recipe_quantity: r.quantity,
-                removed: false,
-                extra: false
-            })) || [];
+            ingredients = filteredRecipeData
+                .filter((r: any) => Boolean(r.child_item))
+                .map((r: any) => ({
+                    instance_id: Math.random().toString(36).substring(2, 11) + Date.now().toString(36),
+                    id: r.child_item.id,
+                    name: r.child_item.name,
+                    base_price: r.child_item.base_price,
+                    recipe_quantity: r.quantity,
+                    removed: false,
+                    extra: false
+                })) || [];
         }
 
         // Add user-selected extras to the ingredients array
@@ -2077,4 +2108,5 @@ export const usePosStore = create<PosState>((set, get) => ({
             return null;
         }
     }
-}));
+    }))
+);

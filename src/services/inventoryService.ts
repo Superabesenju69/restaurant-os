@@ -59,26 +59,69 @@ async function applyStockChanges(
     direction: 1 | -1,
     set: (fn: (prev: { allIngredients: MenuItem[]; items: MenuItem[] }) => Partial<{ allIngredients: MenuItem[]; items: MenuItem[] }>) => void
 ) {
-    for (const [itemId, qty] of Object.entries(changes)) {
-        const { data: currentItem } = await supabase
-            .from('items')
-            .select('stock_level, track_inventory')
-            .eq('id', itemId)
-            .single();
+    const entries = Object.entries(changes).filter(([, qty]) => qty > 0);
+    if (entries.length === 0) return;
 
-        if (currentItem?.track_inventory) {
-            const newStock = Math.max(0, (currentItem.stock_level ?? 0) - (qty * direction));
-            await supabase.from('items').update({ stock_level: newStock }).eq('id', itemId);
-            set((prev: { allIngredients: MenuItem[]; items: MenuItem[] }) => ({
-                allIngredients: prev.allIngredients.map((i: MenuItem) =>
-                    i.id === itemId ? { ...i, stock_level: newStock } : i
-                ),
-                items: prev.items.map((i: MenuItem) =>
-                    i.id === itemId ? { ...i, stock_level: newStock } : i
-                ),
-            }));
-        }
-    }
+    // 1. Optimistic local state update so UI reacts immediately
+    set((prev: { allIngredients: MenuItem[]; items: MenuItem[] }) => {
+        const applyLocalDelta = (list: MenuItem[]) =>
+            list.map((i: MenuItem) => {
+                const qty = changes[i.id];
+                if (qty === undefined || !i.track_inventory) return i;
+                const nextStock = Math.max(0, (i.stock_level ?? 0) - qty * direction);
+                return { ...i, stock_level: nextStock };
+            });
+
+        return {
+            allIngredients: applyLocalDelta(prev.allIngredients),
+            items: applyLocalDelta(prev.items),
+        };
+    });
+
+    // 2. Atomic DB adjustment via adjust_item_stock RPC (with fallback)
+    await Promise.all(
+        entries.map(async ([itemId, qty]) => {
+            const delta = -(qty * direction);
+            const { data: rpcStock, error: rpcError } = await supabase.rpc('adjust_item_stock', {
+                p_item_id: itemId,
+                p_delta: delta,
+            });
+
+            if (!rpcError) {
+                if (typeof rpcStock === 'number') {
+                    set((prev: { allIngredients: MenuItem[]; items: MenuItem[] }) => ({
+                        allIngredients: prev.allIngredients.map((i: MenuItem) =>
+                            i.id === itemId ? { ...i, stock_level: rpcStock } : i
+                        ),
+                        items: prev.items.map((i: MenuItem) =>
+                            i.id === itemId ? { ...i, stock_level: rpcStock } : i
+                        ),
+                    }));
+                }
+                return;
+            }
+
+            // Fallback if RPC is not yet deployed
+            const { data: currentItem } = await supabase
+                .from('items')
+                .select('stock_level, track_inventory')
+                .eq('id', itemId)
+                .single();
+
+            if (currentItem?.track_inventory) {
+                const newStock = Math.max(0, (currentItem.stock_level ?? 0) - (qty * direction));
+                await supabase.from('items').update({ stock_level: newStock }).eq('id', itemId);
+                set((prev: { allIngredients: MenuItem[]; items: MenuItem[] }) => ({
+                    allIngredients: prev.allIngredients.map((i: MenuItem) =>
+                        i.id === itemId ? { ...i, stock_level: newStock } : i
+                    ),
+                    items: prev.items.map((i: MenuItem) =>
+                        i.id === itemId ? { ...i, stock_level: newStock } : i
+                    ),
+                }));
+            }
+        })
+    );
 }
 
 /**

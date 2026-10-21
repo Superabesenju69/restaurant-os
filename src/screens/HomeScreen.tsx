@@ -20,13 +20,26 @@ export default function HomeScreen({ bgStr, tp, language, mapWidth, mapHeight }:
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
 
-  const {
-    setScreen, tableServiceEnabled, mapBackgroundUrl, tables, startOrder,
-    currentPosUser, posLogout, printers, localReceiptPrinterId, setLocalReceiptPrinterId,
-    setLanguage, activeCashShift, setShowCashRegisterModal,
-    showCashRegisterModal, openCashShift, closeCashShift, addCashAdjustment, currency,
-    usdExchangeRate, setUsdExchangeRate
-  } = usePosStore();
+  const setScreen = usePosStore(s => s.setScreen);
+  const tableServiceEnabled = usePosStore(s => s.tableServiceEnabled);
+  const mapBackgroundUrl = usePosStore(s => s.mapBackgroundUrl);
+  const tables = usePosStore(s => s.tables);
+  const startOrder = usePosStore(s => s.startOrder);
+  const currentPosUser = usePosStore(s => s.currentPosUser);
+  const posLogout = usePosStore(s => s.posLogout);
+  const printers = usePosStore(s => s.printers);
+  const localReceiptPrinterId = usePosStore(s => s.localReceiptPrinterId);
+  const setLocalReceiptPrinterId = usePosStore(s => s.setLocalReceiptPrinterId);
+  const setLanguage = usePosStore(s => s.setLanguage);
+  const activeCashShift = usePosStore(s => s.activeCashShift);
+  const setShowCashRegisterModal = usePosStore(s => s.setShowCashRegisterModal);
+  const showCashRegisterModal = usePosStore(s => s.showCashRegisterModal);
+  const openCashShift = usePosStore(s => s.openCashShift);
+  const closeCashShift = usePosStore(s => s.closeCashShift);
+  const addCashAdjustment = usePosStore(s => s.addCashAdjustment);
+  const currency = usePosStore(s => s.currency);
+  const usdExchangeRate = usePosStore(s => s.usdExchangeRate);
+  const setUsdExchangeRate = usePosStore(s => s.setUsdExchangeRate);
 
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showTimeClockModal, setShowTimeClockModal] = useState(false);

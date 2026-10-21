@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { StatusBar } from 'expo-status-bar';
 import { View, Text, SafeAreaView, TouchableOpacity, ScrollView, Image, TextInput } from 'react-native';
 import { usePosStore } from "../store/posStore";
@@ -15,10 +15,18 @@ interface TablesScreenProps {
 }
 
 export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight }: TablesScreenProps) {
-  const {
-    setScreen, mapBackgroundUrl, tables, zones, zoneBackgrounds, items, ordersList,
-    updateTableStatus, reserveTable, startOrder, loadOrder, currency
-  } = usePosStore();
+  const setScreen = usePosStore(s => s.setScreen);
+  const mapBackgroundUrl = usePosStore(s => s.mapBackgroundUrl);
+  const tables = usePosStore(s => s.tables);
+  const zones = usePosStore(s => s.zones);
+  const zoneBackgrounds = usePosStore(s => s.zoneBackgrounds);
+  const items = usePosStore(s => s.items);
+  const ordersList = usePosStore(s => s.ordersList);
+  const updateTableStatus = usePosStore(s => s.updateTableStatus);
+  const reserveTable = usePosStore(s => s.reserveTable);
+  const startOrder = usePosStore(s => s.startOrder);
+  const loadOrder = usePosStore(s => s.loadOrder);
+  const currency = usePosStore(s => s.currency);
 
   const [floorZoneFilter, setFloorZoneFilter] = useState('all');
   const [selectedTableForOrders, setSelectedTableForOrders] = useState<any | null>(null);
@@ -26,11 +34,38 @@ export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight 
   const [showReservationForm, setShowReservationForm] = useState(false);
   const [reservationName, setReservationName] = useState('');
   const [reservationDate, setReservationDate] = useState('');
+  const [fitToScreen, setFitToScreen] = useState(true);
+  const [canvasViewport, setCanvasViewport] = useState({ width: 0, height: 0 });
 
-  const activeZoneObj = zones.find(z => z.id === floorZoneFilter || z.name === floorZoneFilter);
+  const activeZoneObj = useMemo(
+    () => zones.find(z => z.id === floorZoneFilter || z.name === floorZoneFilter),
+    [zones, floorZoneFilter]
+  );
+
   const activeZoneBg = (floorZoneFilter !== 'all' && activeZoneObj)
     ? (zoneBackgrounds?.[activeZoneObj.id] || zoneBackgrounds?.[activeZoneObj.name] || (activeZoneObj as any).background_url || mapBackgroundUrl)
     : mapBackgroundUrl;
+
+  const filteredTables = useMemo(() => {
+    if (floorZoneFilter === 'all') return tables;
+    return tables.filter(
+      tbl =>
+        tbl.zone === floorZoneFilter ||
+        (activeZoneObj && (tbl.zone === activeZoneObj.id || tbl.zone === activeZoneObj.name))
+    );
+  }, [tables, floorZoneFilter, activeZoneObj]);
+
+  const selectedTableOpenOrders = useMemo(() => {
+    if (!selectedTableForOrders) return [];
+    return ordersList.filter(o => o.table_id === selectedTableForOrders.id && o.status === 'open');
+  }, [ordersList, selectedTableForOrders]);
+
+  const scale = useMemo(() => {
+    if (!fitToScreen || canvasViewport.width <= 0 || canvasViewport.height <= 0) return 1;
+    const scaleX = canvasViewport.width / Math.max(mapWidth, 1);
+    const scaleY = canvasViewport.height / Math.max(mapHeight, 1);
+    return Math.min(1, scaleX, scaleY);
+  }, [fitToScreen, canvasViewport.width, canvasViewport.height, mapWidth, mapHeight]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: bgStr }}>
@@ -40,7 +75,21 @@ export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight 
           <Text style={{ fontWeight: 'bold', color: '#374151' }}>{t('pos.floor.back', language)}</Text>
         </TouchableOpacity>
         <Text style={{ fontSize: 20, fontWeight: '900', color: '#111827' }}>{t('pos.floor.select_table', language)}</Text>
-        <View style={{ width: 70 }} />
+        <TouchableOpacity
+          onPress={() => setFitToScreen(prev => !prev)}
+          style={{
+            backgroundColor: fitToScreen ? tp[50] : '#f3f4f6',
+            borderColor: fitToScreen ? tp[300] : '#e5e7eb',
+            borderWidth: 1,
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            borderRadius: 8,
+          }}
+        >
+          <Text style={{ fontWeight: 'bold', fontSize: 12, color: fitToScreen ? tp[700] : '#374151' }}>
+            {fitToScreen ? (language === 'es' ? '🔍 Ajustado' : '🔍 Fit Screen') : '100%'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Zone Filter */}
@@ -56,27 +105,36 @@ export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight 
            >
               <Text style={{ fontWeight: 'bold', color: floorZoneFilter === 'all' ? 'white' : '#374151' }}>{t('pos.floor.all', language)}</Text>
            </TouchableOpacity>
-           {zones.map((z: TableZone) => (
-              <TouchableOpacity
-                key={z.id}
-                onPress={() => setFloorZoneFilter(z.id)}
-                style={{
-                  paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20,
-                  backgroundColor: floorZoneFilter === z.id ? (z.color || '#3b82f6') : 'white',
-                  borderWidth: 1, borderColor: floorZoneFilter === z.id ? (z.color || '#3b82f6') : '#d1d5db'
-                }}
-              >
-                <Text style={{ fontWeight: 'bold', color: floorZoneFilter === z.id ? 'white' : '#374151' }}>{z.name}</Text>
-              </TouchableOpacity>
-           ))}
+           {zones.map((z: TableZone) => {
+              const isSelected = floorZoneFilter === z.id || floorZoneFilter === z.name;
+              return (
+                <TouchableOpacity
+                  key={z.id}
+                  onPress={() => setFloorZoneFilter(z.id)}
+                  style={{
+                    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20,
+                    backgroundColor: isSelected ? (z.color || '#3b82f6') : 'white',
+                    borderWidth: 1, borderColor: isSelected ? (z.color || '#3b82f6') : '#d1d5db'
+                  }}
+                >
+                  <Text style={{ fontWeight: 'bold', color: isSelected ? 'white' : '#374151' }}>{z.name}</Text>
+                </TouchableOpacity>
+              );
+           })}
         </ScrollView>
       </View>
 
       <View style={{ flex: 1, padding: 20 }}>
-        <View style={{ flex: 1, width: '100%', overflow: 'hidden', borderRadius: 16, backgroundColor: '#fdfbeb', borderWidth: 1, borderColor: '#e5e7eb' }}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={true} style={{ flex: 1 }}>
-            <ScrollView showsVerticalScrollIndicator={true} style={{ flex: 1 }}>
-              <View style={{ width: mapWidth, height: mapHeight, position: 'relative' }}>
+        <View
+          onLayout={e => {
+            const { width, height } = e.nativeEvent.layout;
+            setCanvasViewport({ width, height });
+          }}
+          style={{ flex: 1, width: '100%', overflow: 'hidden', borderRadius: 16, backgroundColor: '#fdfbeb', borderWidth: 1, borderColor: '#e5e7eb' }}
+        >
+          <ScrollView horizontal showsHorizontalScrollIndicator={!fitToScreen} style={{ flex: 1 }}>
+            <ScrollView showsVerticalScrollIndicator={!fitToScreen} style={{ flex: 1 }}>
+              <View style={{ width: mapWidth * scale, height: mapHeight * scale, position: 'relative' }}>
                 {activeZoneBg && (
                   <Image
                     source={{ uri: activeZoneBg }}
@@ -85,7 +143,7 @@ export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight 
                   />
                 )}
 
-                {tables.filter(tbl => floorZoneFilter === 'all' || tbl.zone === floorZoneFilter).map((table: FloorTable) => {
+                {filteredTables.map((table: FloorTable) => {
                   const isWall = table.shape === 'wall';
                   const isCircle = table.shape === 'circle';
                   const isOccupied = table.status === 'occupied';
@@ -100,10 +158,12 @@ export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight 
                   else if (isReserved) { bg = '#fbcfe8'; border = '#f472b6'; text = '#9d174d'; }
                   else if (isUnavailable) { bg = '#f3f4f6'; border = '#d1d5db'; text = '#6b7280'; }
 
-                  const minDim = Math.min(table.width, table.height);
-                  const titleSize = Math.max(10, minDim * 0.18);
+                  const scaledW = table.width * scale;
+                  const scaledH = table.height * scale;
+                  const minDim = Math.min(scaledW, scaledH);
+                  const titleSize = Math.max(9, minDim * 0.18);
                   const badgeSize = Math.max(7, minDim * 0.09);
-                  const showBadge = minDim >= 60;
+                  const showBadge = minDim >= 48;
 
                   return (
                     <TouchableOpacity
@@ -112,10 +172,10 @@ export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight 
                       onPress={() => setSelectedTableForOrders(table)}
                       style={{
                         position: 'absolute',
-                        left: table.x,
-                        top: table.y,
-                        width: table.width,
-                        height: table.height,
+                        left: table.x * scale,
+                        top: table.y * scale,
+                        width: scaledW,
+                        height: scaledH,
                         backgroundColor: bg,
                         borderColor: border,
                         borderWidth: isOccupied || isReserved ? 3 : 2,
@@ -169,7 +229,7 @@ export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight 
             </View>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                <Text style={{ color: '#6b7280', fontSize: 14 }}>
-                 {ordersList.filter(o => o.table_id === selectedTableForOrders.id && o.status === 'open').length} {t('pos.table.active_orders', language)}
+                 {selectedTableOpenOrders.length} {t('pos.table.active_orders', language)}
                </Text>
                <View style={{ flexDirection: 'row', gap: 6 }}>
                   <TouchableOpacity onPress={() => updateTableStatus(selectedTableForOrders.id, 'available')} style={{ backgroundColor: selectedTableForOrders.status === 'available' ? '#111827' : '#f3f4f6', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }}>
@@ -222,13 +282,13 @@ export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight 
             ) : (
               <>
                 <ScrollView style={{ maxHeight: 460, marginBottom: 16 }} showsVerticalScrollIndicator={true}>
-              {ordersList.filter(o => o.table_id === selectedTableForOrders.id && o.status === 'open').length === 0 ? (
+              {selectedTableOpenOrders.length === 0 ? (
                 <View style={{ paddingVertical: 32, alignItems: 'center' }}>
                   <Text style={{ color: '#6b7280', fontSize: 16 }}>{t('pos.table.no_active_orders', language)}</Text>
                   <Text style={{ color: '#9ca3af', fontSize: 13, marginTop: 8 }}>{t('pos.table.use_form', language)}</Text>
                 </View>
               ) : (
-                ordersList.filter(o => o.table_id === selectedTableForOrders.id && o.status === 'open').map(order => {
+                selectedTableOpenOrders.map(order => {
                   const totalItems = (order.order_line_items || []).reduce((acc: number, curr: OrderLineItem) => acc + curr.quantity, 0);
                   const createdDate = new Date(order.created_at);
                   const timeString = createdDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

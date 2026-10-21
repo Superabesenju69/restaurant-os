@@ -23,21 +23,67 @@ import { calculateVariationMaxStock, canIncrementCartItem } from './src/services
 import { checkForUpdates } from "./src/utils/updateChecker";
 
 function MainApp() {
-  const {
-    screen, setScreen,
-    categories, itemCategoryLinks, items, allIngredients, recipes, cart, activeCategory, isLoading,
-    inspectingCartItemId, inspectingSubItemId,
-    tables, activeOrderId, activeOrderType, activeOrderTable, activeOrderCustomer, activeOrderNumber,
-    fetchMenu, setupSubscriptions, setActiveCategory, setInspectingCartItemId, setInspectingSubItemId, isItemAvailable,
-    addToCart, removeFromCart, clearCart, toggleIngredient, addExtraIngredient, removeExtraIngredient, checkout, sendToKitchen, incrementCartItemQuantity, decrementCartItemQuantity, updateCartItemOptions,
-    startOrder, loadOrder,
-    currentPosUser, posLogin, themeColor,
-    localReceiptPrinterId,
-    availablePromotions, appliedGlobalPromotionIds, applyManualPromotion, removeManualPromotion, recalculateCartMath,
-    language, currency, secondaryCurrency, enableSecondaryCurrency, enableTax, taxRate, pricesIncludeTax, zoneBackgrounds,
-    activeCashShift, showCashRegisterModal, setShowCashRegisterModal,
-    openCashShift, closeCashShift, addCashAdjustment, usdExchangeRate
-  } = usePosStore();
+  const screen = usePosStore(s => s.screen);
+  const setScreen = usePosStore(s => s.setScreen);
+  const categories = usePosStore(s => s.categories);
+  const itemCategoryLinks = usePosStore(s => s.itemCategoryLinks);
+  const items = usePosStore(s => s.items);
+  const allIngredients = usePosStore(s => s.allIngredients);
+  const recipes = usePosStore(s => s.recipes);
+  const cart = usePosStore(s => s.cart);
+  const activeCategory = usePosStore(s => s.activeCategory);
+  const isLoading = usePosStore(s => s.isLoading);
+  const inspectingCartItemId = usePosStore(s => s.inspectingCartItemId);
+  const inspectingSubItemId = usePosStore(s => s.inspectingSubItemId);
+  const tables = usePosStore(s => s.tables);
+  const activeOrderId = usePosStore(s => s.activeOrderId);
+  const activeOrderType = usePosStore(s => s.activeOrderType);
+  const activeOrderTable = usePosStore(s => s.activeOrderTable);
+  const activeOrderCustomer = usePosStore(s => s.activeOrderCustomer);
+  const activeOrderNumber = usePosStore(s => s.activeOrderNumber);
+  const fetchMenu = usePosStore(s => s.fetchMenu);
+  const setupSubscriptions = usePosStore(s => s.setupSubscriptions);
+  const setActiveCategory = usePosStore(s => s.setActiveCategory);
+  const setInspectingCartItemId = usePosStore(s => s.setInspectingCartItemId);
+  const setInspectingSubItemId = usePosStore(s => s.setInspectingSubItemId);
+  const isItemAvailable = usePosStore(s => s.isItemAvailable);
+  const addToCart = usePosStore(s => s.addToCart);
+  const removeFromCart = usePosStore(s => s.removeFromCart);
+  const clearCart = usePosStore(s => s.clearCart);
+  const toggleIngredient = usePosStore(s => s.toggleIngredient);
+  const addExtraIngredient = usePosStore(s => s.addExtraIngredient);
+  const removeExtraIngredient = usePosStore(s => s.removeExtraIngredient);
+  const checkout = usePosStore(s => s.checkout);
+  const sendToKitchen = usePosStore(s => s.sendToKitchen);
+  const incrementCartItemQuantity = usePosStore(s => s.incrementCartItemQuantity);
+  const decrementCartItemQuantity = usePosStore(s => s.decrementCartItemQuantity);
+  const updateCartItemOptions = usePosStore(s => s.updateCartItemOptions);
+  const startOrder = usePosStore(s => s.startOrder);
+  const loadOrder = usePosStore(s => s.loadOrder);
+  const currentPosUser = usePosStore(s => s.currentPosUser);
+  const posLogin = usePosStore(s => s.posLogin);
+  const themeColor = usePosStore(s => s.themeColor);
+  const localReceiptPrinterId = usePosStore(s => s.localReceiptPrinterId);
+  const availablePromotions = usePosStore(s => s.availablePromotions);
+  const appliedGlobalPromotionIds = usePosStore(s => s.appliedGlobalPromotionIds);
+  const applyManualPromotion = usePosStore(s => s.applyManualPromotion);
+  const removeManualPromotion = usePosStore(s => s.removeManualPromotion);
+  const recalculateCartMath = usePosStore(s => s.recalculateCartMath);
+  const language = usePosStore(s => s.language);
+  const currency = usePosStore(s => s.currency);
+  const secondaryCurrency = usePosStore(s => s.secondaryCurrency);
+  const enableSecondaryCurrency = usePosStore(s => s.enableSecondaryCurrency);
+  const enableTax = usePosStore(s => s.enableTax);
+  const taxRate = usePosStore(s => s.taxRate);
+  const pricesIncludeTax = usePosStore(s => s.pricesIncludeTax);
+  const zoneBackgrounds = usePosStore(s => s.zoneBackgrounds);
+  const activeCashShift = usePosStore(s => s.activeCashShift);
+  const showCashRegisterModal = usePosStore(s => s.showCashRegisterModal);
+  const setShowCashRegisterModal = usePosStore(s => s.setShowCashRegisterModal);
+  const openCashShift = usePosStore(s => s.openCashShift);
+  const closeCashShift = usePosStore(s => s.closeCashShift);
+  const addCashAdjustment = usePosStore(s => s.addCashAdjustment);
+  const usdExchangeRate = usePosStore(s => s.usdExchangeRate);
 
   const themeBgs: Record<string, string> = {
     teal: '#f0fdfa',
@@ -112,7 +158,9 @@ function MainApp() {
   }, [showCashRegisterModal, activeCashShift]);
 
 
-  const { tenantId, setTenant, clearTenant } = usePosStore();
+  const tenantId = usePosStore(s => s.tenantId);
+  const setTenant = usePosStore(s => s.setTenant);
+  const clearTenant = usePosStore(s => s.clearTenant);
   const [tenantChecking, setTenantChecking] = useState(true);
 
   useEffect(() => {

@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { StatusBar } from 'expo-status-bar';
-import { View, Text, SafeAreaView, TouchableOpacity, FlatList, ActivityIndicator, ScrollView, Alert, useWindowDimensions } from 'react-native';
+import { View, Text, SafeAreaView, TouchableOpacity, FlatList, ActivityIndicator, ScrollView, Alert, Platform, useWindowDimensions } from 'react-native';
 import { usePosStore } from "../store/posStore";
 import { t } from '../utils/i18n';
 import { formatCurrency } from '../utils/currency';
@@ -16,17 +16,21 @@ export default function OrdersScreen({ bgStr, tp, language }: OrdersScreenProps)
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
 
-  const {
-    setScreen, ordersList, isLoadingOrders, loadOrder, items, allIngredients, currency
-  } = usePosStore();
+  const setScreen = usePosStore(s => s.setScreen);
+  const ordersList = usePosStore(s => s.ordersList);
+  const isLoadingOrders = usePosStore(s => s.isLoadingOrders);
+  const loadOrder = usePosStore(s => s.loadOrder);
+  const items = usePosStore(s => s.items);
+  const allIngredients = usePosStore(s => s.allIngredients);
+  const currency = usePosStore(s => s.currency);
 
   const [orderTab, setOrderTab] = useState<'open' | 'paid' | 'void'>('open');
   const [selectedPastOrder, setSelectedPastOrder] = useState<any | null>(null);
 
-  const openOrders = ordersList.filter((o: Order) => o.status === 'open');
-  const paidOrders = ordersList.filter((o: Order) => o.status === 'paid');
-  const voidOrders = ordersList.filter((o: Order) => o.status === 'void' || o.status === 'voided' || o.status === 'cancelled');
-  const tabData = orderTab === 'open' ? openOrders : orderTab === 'paid' ? paidOrders : voidOrders;
+  const openOrders = useMemo(() => ordersList.filter((o: Order) => o.status === 'open'), [ordersList]);
+  const paidOrders = useMemo(() => ordersList.filter((o: Order) => o.status === 'paid'), [ordersList]);
+  const voidOrders = useMemo(() => ordersList.filter((o: Order) => o.status === 'void' || o.status === 'voided' || o.status === 'cancelled'), [ordersList]);
+  const tabData = useMemo(() => (orderTab === 'open' ? openOrders : orderTab === 'paid' ? paidOrders : voidOrders), [orderTab, openOrders, paidOrders, voidOrders]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: bgStr }}>
@@ -142,8 +146,19 @@ export default function OrdersScreen({ bgStr, tp, language }: OrdersScreenProps)
                     <TouchableOpacity 
                       onPress={(e) => { 
                           e.stopPropagation();
-                          if (window.confirm && window.confirm(t('pos.orders.void_confirm', language))) {
-                              usePosStore.getState().voidOrder(item.id); 
+                          if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+                              if (window.confirm(t('pos.orders.void_confirm', language))) {
+                                  usePosStore.getState().voidOrder(item.id);
+                              }
+                          } else {
+                              Alert.alert(
+                                  t('pos.orders.void_btn', language),
+                                  t('pos.orders.void_confirm', language),
+                                  [
+                                      { text: t('pos.modal.cancel', language), style: 'cancel' },
+                                      { text: t('pos.orders.void_btn', language), style: 'destructive', onPress: () => usePosStore.getState().voidOrder(item.id) }
+                                  ]
+                              );
                           }
                       }}
                       style={{ backgroundColor: '#fee2e2', padding: 8, paddingHorizontal: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}
