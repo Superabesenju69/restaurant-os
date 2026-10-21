@@ -1,7 +1,33 @@
 import { Alert } from 'react-native';
-import { create } from 'zustand';
-import { subscribeWithSelector } from 'zustand/middleware';
+import { create, type StateCreator } from 'zustand';
 import { supabase, setTenantIdHeader } from '../utils/supabase';
+
+// Safe inline subscribeWithSelector middleware (avoids bundling zustand/esm/middleware.mjs
+// which contains `import.meta.env` and breaks classic <script defer> tags on Expo Web).
+const subscribeWithSelector = <T extends object>(
+    fn: StateCreator<T, [], []>
+): StateCreator<T, [], []> => (set, get, api) => {
+    const origSubscribe = api.subscribe;
+    (api as any).subscribe = (selector: any, optListener?: any, options?: any) => {
+        if (!optListener) {
+            return origSubscribe(selector);
+        }
+        const equalityFn = options?.equalityFn || Object.is;
+        let currentSlice = selector(api.getState());
+        const listener = (state: T) => {
+            const nextSlice = selector(state);
+            if (!equalityFn(currentSlice, nextSlice)) {
+                const previousSlice = currentSlice;
+                optListener((currentSlice = nextSlice), previousSlice);
+            }
+        };
+        if (options?.fireImmediately) {
+            optListener(currentSlice, currentSlice);
+        }
+        return origSubscribe(listener);
+    };
+    return fn(set, get, api);
+};
 import { buildReceiptBuffer, printToNetwork } from '../utils/printerEngine';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
