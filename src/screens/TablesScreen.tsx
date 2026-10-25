@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from "react";
 import { StatusBar } from 'expo-status-bar';
-import { View, Text, SafeAreaView, TouchableOpacity, ScrollView, Image, TextInput } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Image, TextInput, useWindowDimensions } from 'react-native';
 import { usePosStore } from "../store/posStore";
 import { t } from '../utils/i18n';
 import { formatCurrency } from '../utils/currency';
+import { useSafePadding } from '../utils/safeArea';
 import type { TableZone, FloorTable, OrderLineItem, MenuItem } from '../types';
 
 interface TablesScreenProps {
@@ -15,6 +16,9 @@ interface TablesScreenProps {
 }
 
 export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight }: TablesScreenProps) {
+  const { width } = useWindowDimensions();
+  const isMobile = width < 768;
+  const { topPad, bottomPad } = useSafePadding();
   const setScreen = usePosStore(s => s.setScreen);
   const mapBackgroundUrl = usePosStore(s => s.mapBackgroundUrl);
   const tables = usePosStore(s => s.tables);
@@ -68,13 +72,13 @@ export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight 
   }, [fitToScreen, canvasViewport.width, canvasViewport.height, mapWidth, mapHeight]);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: bgStr }}>
+    <View style={{ flex: 1, backgroundColor: bgStr }}>
       <StatusBar style="dark" />
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#e5e7eb', backgroundColor: 'white' }}>
-        <TouchableOpacity onPress={() => setScreen('home')} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}>
-          <Text style={{ fontWeight: 'bold', color: '#374151' }}>{t('pos.floor.back', language)}</Text>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: topPad + 12, paddingBottom: 14, paddingHorizontal: isMobile ? 14 : 24, borderBottomWidth: 1, borderBottomColor: '#e5e7eb', backgroundColor: 'white' }}>
+        <TouchableOpacity onPress={() => setScreen('home')} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: isMobile ? 12 : 16, paddingVertical: 8, borderRadius: 8 }}>
+          <Text style={{ fontWeight: 'bold', color: '#374151', fontSize: isMobile ? 13 : 14 }}>{t('pos.floor.back', language)}</Text>
         </TouchableOpacity>
-        <Text style={{ fontSize: 20, fontWeight: '900', color: '#111827' }}>{t('pos.floor.select_table', language)}</Text>
+        <Text style={{ flex: 1, textAlign: 'center', fontSize: isMobile ? 17 : 20, fontWeight: '900', color: '#111827', marginHorizontal: 8 }} numberOfLines={1}>{t('pos.floor.select_table', language)}</Text>
         <TouchableOpacity
           onPress={() => setFitToScreen(prev => !prev)}
           style={{
@@ -93,7 +97,7 @@ export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight 
       </View>
 
       {/* Zone Filter */}
-      <View style={{ paddingHorizontal: 20, paddingTop: 16, flexDirection: 'row', gap: 8 }}>
+      <View style={{ paddingHorizontal: isMobile ? 14 : 20, paddingTop: 14, flexDirection: 'row', gap: 8 }}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
            <TouchableOpacity
               onPress={() => setFloorZoneFilter('all')}
@@ -124,7 +128,7 @@ export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight 
         </ScrollView>
       </View>
 
-      <View style={{ flex: 1, padding: 20 }}>
+      <View style={{ flex: 1, padding: isMobile ? 12 : 20, paddingBottom: bottomPad + 16 }}>
         <View
           onLayout={e => {
             const { width, height } = e.nativeEvent.layout;
@@ -219,19 +223,19 @@ export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight 
 
       {/* Selected Table Orders Overlay */}
       {selectedTableForOrders && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <View style={{ backgroundColor: 'white', borderRadius: 24, padding: 28, width: '90%', maxWidth: 640, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 10, maxHeight: '85%' }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-              <Text style={{ fontSize: 24, fontWeight: '900', color: '#111827' }}>🪑 {selectedTableForOrders.name}</Text>
-              <TouchableOpacity onPress={() => { setSelectedTableForOrders(null); setShowReservationForm(false); }} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}>
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', zIndex: 100, paddingTop: topPad + 16, paddingBottom: bottomPad + 16, paddingHorizontal: 16 }}>
+          <View style={{ backgroundColor: 'white', borderRadius: 24, padding: isMobile ? 20 : 28, width: '100%', maxWidth: 640, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 10, maxHeight: '100%' }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text style={{ flex: 1, fontSize: isMobile ? 20 : 24, fontWeight: '900', color: '#111827', marginRight: 8 }} numberOfLines={1}>🪑 {selectedTableForOrders.name}</Text>
+              <TouchableOpacity onPress={() => { setSelectedTableForOrders(null); setShowReservationForm(false); }} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 }}>
                 <Text style={{ fontWeight: 'bold', color: '#374151' }}>{t('pos.table.close', language)}</Text>
               </TouchableOpacity>
             </View>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 16 }}>
                <Text style={{ color: '#6b7280', fontSize: 14 }}>
                  {selectedTableOpenOrders.length} {t('pos.table.active_orders', language)}
                </Text>
-               <View style={{ flexDirection: 'row', gap: 6 }}>
+               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
                   <TouchableOpacity onPress={() => updateTableStatus(selectedTableForOrders.id, 'available')} style={{ backgroundColor: selectedTableForOrders.status === 'available' ? '#111827' : '#f3f4f6', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }}>
                      <Text style={{ fontSize: 12, fontWeight: 'bold', color: selectedTableForOrders.status === 'available' ? 'white' : '#4b5563' }}>{t('pos.table.btn_available', language)}</Text>
                   </TouchableOpacity>
@@ -366,6 +370,6 @@ export default function TablesScreen({ bgStr, tp, language, mapWidth, mapHeight 
           </View>
         </View>
       )}
-    </SafeAreaView>
+    </View>
   );
 }

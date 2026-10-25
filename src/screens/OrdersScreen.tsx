@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from "react";
 import { StatusBar } from 'expo-status-bar';
-import { View, Text, SafeAreaView, TouchableOpacity, FlatList, ActivityIndicator, ScrollView, Alert, Platform, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, FlatList, ActivityIndicator, ScrollView, Alert, Platform, useWindowDimensions } from 'react-native';
 import { usePosStore } from "../store/posStore";
 import { t } from '../utils/i18n';
 import { formatCurrency } from '../utils/currency';
+import { useSafePadding } from '../utils/safeArea';
 import type { Order, OrderLineItem, MenuItem, ItemOption, ItemOptionChoice, CartItemIngredient, CartItem, Payment } from '../types';
 
 interface OrdersScreenProps {
@@ -15,6 +16,8 @@ interface OrdersScreenProps {
 export default function OrdersScreen({ bgStr, tp, language }: OrdersScreenProps) {
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
+  const isMobile = width < 768;
+  const { topPad, bottomPad } = useSafePadding();
 
   const setScreen = usePosStore(s => s.setScreen);
   const ordersList = usePosStore(s => s.ordersList);
@@ -33,42 +36,42 @@ export default function OrdersScreen({ bgStr, tp, language }: OrdersScreenProps)
   const tabData = useMemo(() => (orderTab === 'open' ? openOrders : orderTab === 'paid' ? paidOrders : voidOrders), [orderTab, openOrders, paidOrders, voidOrders]);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: bgStr }}>
+    <View style={{ flex: 1, backgroundColor: bgStr }}>
       <StatusBar style="dark" />
 
       {/* Header */}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#e5e7eb', backgroundColor: 'white' }}>
-        <TouchableOpacity onPress={() => setScreen('home')} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}>
-          <Text style={{ fontWeight: 'bold', color: '#374151' }}>{t('pos.orders.back', language)}</Text>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: topPad + 12, paddingBottom: 14, paddingHorizontal: isMobile ? 14 : 24, borderBottomWidth: 1, borderBottomColor: '#e5e7eb', backgroundColor: 'white' }}>
+        <TouchableOpacity onPress={() => setScreen('home')} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: isMobile ? 12 : 16, paddingVertical: 8, borderRadius: 8 }}>
+          <Text style={{ fontWeight: 'bold', color: '#374151', fontSize: isMobile ? 13 : 14 }}>{t('pos.orders.back', language)}</Text>
         </TouchableOpacity>
-        <Text style={{ fontSize: 20, fontWeight: '900', color: '#111827' }}>{t('pos.orders.title', language)}</Text>
-        <TouchableOpacity onPress={() => usePosStore.getState().fetchOrders()} style={{ backgroundColor: tp[50], paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}>
-          <Text style={{ fontWeight: 'bold', color: tp[600] }}>{t('pos.orders.refresh', language)}</Text>
+        <Text style={{ flex: 1, textAlign: 'center', fontSize: isMobile ? 17 : 20, fontWeight: '900', color: '#111827', marginHorizontal: 8 }} numberOfLines={1}>{t('pos.orders.title', language)}</Text>
+        <TouchableOpacity onPress={() => usePosStore.getState().fetchOrders()} style={{ backgroundColor: tp[50], paddingHorizontal: isMobile ? 12 : 16, paddingVertical: 8, borderRadius: 8 }}>
+          <Text style={{ fontWeight: 'bold', color: tp[600], fontSize: isMobile ? 13 : 14 }}>{t('pos.orders.refresh', language)}</Text>
         </TouchableOpacity>
       </View>
 
       {/* Tabs */}
-      <View style={{ backgroundColor: 'white', borderBottomWidth: 1, borderBottomColor: '#e5e7eb', paddingHorizontal: 16, paddingVertical: 12 }}>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
+      <View style={{ backgroundColor: 'white', borderBottomWidth: 1, borderBottomColor: '#e5e7eb', paddingHorizontal: isMobile ? 12 : 16, paddingVertical: 10 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', gap: 8 }}>
           <TouchableOpacity
             onPress={() => setOrderTab('open')}
-            style={{ paddingHorizontal: 20, paddingVertical: 10, borderRadius: 99, borderWidth: 1, backgroundColor: orderTab === 'open' ? tp[600] : 'white', borderColor: orderTab === 'open' ? tp[600] : '#e5e7eb' }}
+            style={{ paddingHorizontal: isMobile ? 16 : 20, paddingVertical: 9, borderRadius: 99, borderWidth: 1, backgroundColor: orderTab === 'open' ? tp[600] : 'white', borderColor: orderTab === 'open' ? tp[600] : '#e5e7eb' }}
           >
-            <Text style={{ fontWeight: 'bold', color: orderTab === 'open' ? 'white' : '#374151' }}>{t('pos.orders.open', language)} ({openOrders.length})</Text>
+            <Text style={{ fontWeight: 'bold', fontSize: isMobile ? 13 : 14, color: orderTab === 'open' ? 'white' : '#374151' }}>{t('pos.orders.open', language)} ({openOrders.length})</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setOrderTab('paid')}
-            style={{ paddingHorizontal: 20, paddingVertical: 10, borderRadius: 99, borderWidth: 1, backgroundColor: orderTab === 'paid' ? tp[600] : 'white', borderColor: orderTab === 'paid' ? tp[600] : '#e5e7eb' }}
+            style={{ paddingHorizontal: isMobile ? 16 : 20, paddingVertical: 9, borderRadius: 99, borderWidth: 1, backgroundColor: orderTab === 'paid' ? tp[600] : 'white', borderColor: orderTab === 'paid' ? tp[600] : '#e5e7eb' }}
           >
-            <Text style={{ fontWeight: 'bold', color: orderTab === 'paid' ? 'white' : '#374151' }}>{t('pos.orders.paid_tab', language)} ({paidOrders.length})</Text>
+            <Text style={{ fontWeight: 'bold', fontSize: isMobile ? 13 : 14, color: orderTab === 'paid' ? 'white' : '#374151' }}>{t('pos.orders.paid_tab', language)} ({paidOrders.length})</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setOrderTab('void')}
-            style={{ paddingHorizontal: 20, paddingVertical: 10, borderRadius: 99, borderWidth: 1, backgroundColor: orderTab === 'void' ? tp[600] : 'white', borderColor: orderTab === 'void' ? tp[600] : '#e5e7eb' }}
+            style={{ paddingHorizontal: isMobile ? 16 : 20, paddingVertical: 9, borderRadius: 99, borderWidth: 1, backgroundColor: orderTab === 'void' ? tp[600] : 'white', borderColor: orderTab === 'void' ? tp[600] : '#e5e7eb' }}
           >
-            <Text style={{ fontWeight: 'bold', color: orderTab === 'void' ? 'white' : '#374151' }}>{t('pos.orders.void_tab', language)} ({voidOrders.length})</Text>
+            <Text style={{ fontWeight: 'bold', fontSize: isMobile ? 13 : 14, color: orderTab === 'void' ? 'white' : '#374151' }}>{t('pos.orders.void_tab', language)} ({voidOrders.length})</Text>
           </TouchableOpacity>
-        </View>
+        </ScrollView>
       </View>
 
       {isLoadingOrders ? (
@@ -79,7 +82,7 @@ export default function OrdersScreen({ bgStr, tp, language }: OrdersScreenProps)
         <FlatList
           data={tabData}
           keyExtractor={o => o.id}
-          contentContainerStyle={{ paddingBottom: 24, paddingHorizontal: 16, paddingTop: 16 }}
+          contentContainerStyle={{ paddingBottom: bottomPad + 24, paddingHorizontal: 16, paddingTop: 16 }}
           ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
           renderItem={({ item }) => {
             const isOpen = item.status === 'open';
@@ -186,17 +189,17 @@ export default function OrdersScreen({ bgStr, tp, language }: OrdersScreenProps)
       {/* Past Order Receipt Modal */}
       {selectedPastOrder && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, elevation: 130, zIndex: 130 }}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', alignItems: 'center', justifyContent: 'center' }}>
-            <View style={{ backgroundColor: '#f8fafc', borderRadius: 8, width: 380, maxHeight: '90%', shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 40, overflow: 'hidden' }}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', alignItems: 'center', justifyContent: 'center', paddingTop: topPad + 16, paddingBottom: bottomPad + 16, paddingHorizontal: 16 }}>
+            <View style={{ backgroundColor: '#f8fafc', borderRadius: 12, width: '100%', maxWidth: 380, maxHeight: '100%', shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 40, overflow: 'hidden' }}>
 
-              <View style={{ backgroundColor: 'white', padding: 32, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: '#e2e8f0', borderStyle: 'dashed' }}>
-                <Text style={{ fontSize: 24, fontWeight: '900', color: '#0f172a', textTransform: 'uppercase', letterSpacing: 2 }}>{t('pos.receipt.copy', language)}</Text>
+              <View style={{ backgroundColor: 'white', padding: isMobile ? 20 : 32, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: '#e2e8f0', borderStyle: 'dashed' }}>
+                <Text style={{ fontSize: isMobile ? 20 : 24, fontWeight: '900', color: '#0f172a', textTransform: 'uppercase', letterSpacing: 2 }}>{t('pos.receipt.copy', language)}</Text>
                 <Text style={{ fontSize: 14, color: '#64748b', marginTop: 8 }}>{t('pos.lbl.order_prefix', language)} #{selectedPastOrder.order_number}</Text>
                 {selectedPastOrder.table_name && <Text style={{ fontSize: 14, color: '#64748b', fontWeight: 'bold' }}>{t('pos.receipt.table', language)} {selectedPastOrder.table_name}</Text>}
                 <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>{new Date(selectedPastOrder.created_at).toLocaleString()}</Text>
               </View>
 
-              <ScrollView style={{ backgroundColor: 'white', padding: 32 }} showsVerticalScrollIndicator={false}>
+              <ScrollView style={{ backgroundColor: 'white', padding: isMobile ? 20 : 32 }} showsVerticalScrollIndicator={false}>
                 <View style={{ marginBottom: 24 }}>
                   <Text style={{ fontSize: 13, fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>{t('pos.receipt.items', language)}</Text>
                   {(selectedPastOrder.order_line_items || []).map((line: OrderLineItem, idx: number) => {
@@ -380,6 +383,6 @@ export default function OrdersScreen({ bgStr, tp, language }: OrdersScreenProps)
           </View>
         </View>
       )}
-    </SafeAreaView>
+    </View>
   );
 }

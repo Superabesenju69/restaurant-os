@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, TextInput, StyleSheet, ActivityIndicator, Alert, Modal, Platform } from 'react-native';
 import { supabase } from '../utils/supabase';
+import { useSafePadding } from '../utils/safeArea';
 
 interface Props {
     visible: boolean;
@@ -13,6 +14,7 @@ interface Props {
 
 export default function TimeClockModal({ visible, onClose, userId, employeeName, language, tp }: Props) {
     const isEs = language === 'es';
+    const { topPad, bottomPad } = useSafePadding();
     const [loading, setLoading] = useState(false);
     const [actionLoading, setActionLoading] = useState(false);
     const [activeTab, setActiveTab] = useState<'clock' | 'calendar' | 'leaves'>('clock');
@@ -150,8 +152,8 @@ export default function TimeClockModal({ visible, onClose, userId, employeeName,
     }
 
     return (
-        <Modal visible={visible} transparent animationType="fade">
-            <View style={styles.overlay}>
+        <Modal visible={visible} transparent animationType="fade" statusBarTranslucent>
+            <View style={[styles.overlay, { paddingTop: topPad + 16, paddingBottom: bottomPad + 16 }]}>
                 <View style={styles.modalCard}>
                     {/* Header */}
                     <View style={styles.header}>
@@ -372,9 +374,9 @@ const styles = StyleSheet.create({
     modalCard: {
         backgroundColor: 'white',
         borderRadius: 24,
-        width: '95%',
+        width: '100%',
         maxWidth: 480,
-        maxHeight: '90%',
+        maxHeight: '100%',
         shadowColor: '#000',
         shadowOpacity: 0.15,
         shadowRadius: 20,

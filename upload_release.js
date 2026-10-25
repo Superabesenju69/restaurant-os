@@ -10,8 +10,8 @@ if (!token) {
 
 const owner = "Superabesenju69";
 const repo = "restaurant-os";
-const tag = "v1.0.9";
-const filePath = path.resolve("releases/pos-app-v1.0.9.apk");
+const tag = "v1.0.10";
+const filePath = path.resolve("releases/pos-app-v1.0.10.apk");
 
 if (!fs.existsSync(filePath)) {
   console.error(`❌ Error: APK file not found at ${filePath}!`);

@@ -2,6 +2,10 @@
 
 All notable changes to the Restaurant OS project will be documented in this file.
 
+## [2026-10-21] — v1.0.10
+### Fixed
+- **Phone Status Bar / Camera Cutout Safe Area Across All Screens & Modals**: Created [safeArea.ts](file:///Users/abrahammartinez/.gemini/antigravity/scratch/restaurant-os/pos-app/src/utils/safeArea.ts) (`useSafePadding`) backed by `<SafeAreaProvider>` and `useSafeAreaInsets` from `react-native-safe-area-context` with an Android status bar / punch-hole fallback (`Math.max(insets.top, 36)`). Applied safe top and bottom padding and mobile-responsive header/modal layouts across [App.tsx](file:///Users/abrahammartinez/.gemini/antigravity/scratch/restaurant-os/pos-app/App.tsx), [OrdersScreen.tsx](file:///Users/abrahammartinez/.gemini/antigravity/scratch/restaurant-os/pos-app/src/screens/OrdersScreen.tsx), [TablesScreen.tsx](file:///Users/abrahammartinez/.gemini/antigravity/scratch/restaurant-os/pos-app/src/screens/TablesScreen.tsx), [ServingScreen.tsx](file:///Users/abrahammartinez/.gemini/antigravity/scratch/restaurant-os/pos-app/src/screens/ServingScreen.tsx), [HomeScreen.tsx](file:///Users/abrahammartinez/.gemini/antigravity/scratch/restaurant-os/pos-app/src/screens/HomeScreen.tsx), [PinLoginScreen.tsx](file:///Users/abrahammartinez/.gemini/antigravity/scratch/restaurant-os/pos-app/src/screens/PinLoginScreen.tsx), and [TimeClockModal.tsx](file:///Users/abrahammartinez/.gemini/antigravity/scratch/restaurant-os/pos-app/src/components/TimeClockModal.tsx) so top navigation buttons and modal close buttons never overlap the phone's system status bar.
+
 ## [2026-10-20]
 ### Added
 - Created atomic PostgreSQL RPC migration [20261020_atomic_stock_rpc.sql](file:///Users/abrahammartinez/.gemini/antigravity/scratch/restaurant-os/supabase/migrations/20261020_atomic_stock_rpc.sql) (`public.adjust_item_stock(p_item_id UUID, p_delta NUMERIC)`) to eliminate read-then-write stock race conditions across concurrent POS terminals.

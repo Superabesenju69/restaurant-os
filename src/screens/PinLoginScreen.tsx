@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, SafeAreaView, TextInput, ScrollView, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, TextInput, ScrollView, useWindowDimensions } from 'react-native';
 import { usePosStore } from '../store/posStore';
 import { t } from '../utils/i18n';
 import TimeClockModal from '../components/TimeClockModal';
 import { supabase } from '../utils/supabase';
+import { useSafePadding } from '../utils/safeArea';
 
 interface Props {
     onLogin: (user: { id: string; full_name: string; role: string }) => void;
@@ -14,6 +15,7 @@ const DIGITS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'];
 export default function PinLoginScreen({ onLogin }: Props) {
     const { width, height } = useWindowDimensions();
     const isLandscape = width > height;
+    const { topPad, bottomPad } = useSafePadding();
 
     const { themeColor, language, tenantId, tenantName, setTenant, clearTenant } = usePosStore();
     const [pin, setPin] = useState('');
@@ -179,8 +181,8 @@ export default function PinLoginScreen({ onLogin }: Props) {
 
     if (!tenantId) {
         return (
-            <SafeAreaView style={[styles.container, { backgroundColor: bgStr }]}>
-                <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            <View style={[styles.container, { backgroundColor: bgStr }]}>
+                <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: topPad + 20, paddingBottom: bottomPad + 20, paddingHorizontal: 16 }]} showsVerticalScrollIndicator={false}>
                     <View style={[styles.card, { backgroundColor: bgStr }]}>
                         <View style={[styles.logo, { backgroundColor: primStr }]}>
                             <Text style={styles.logoText}>🍽</Text>
@@ -223,17 +225,17 @@ export default function PinLoginScreen({ onLogin }: Props) {
                         </TouchableOpacity>
                     </View>
                 </ScrollView>
-            </SafeAreaView>
+            </View>
         );
     }
 
     return (
-        <SafeAreaView style={[styles.container, { backgroundColor: bgStr }]}>
-            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <View style={[styles.container, { backgroundColor: bgStr }]}>
+            <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: topPad + 20, paddingBottom: bottomPad + 20, paddingHorizontal: 16 }]} showsVerticalScrollIndicator={false}>
                 <View style={[
                     styles.card, 
                     { backgroundColor: bgStr },
-                    isLandscape && { width: Math.min(800, width * 0.9), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingVertical: 24 }
+                    isLandscape && { width: Math.min(800, width * 0.9), maxWidth: 800, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingVertical: 24 }
                 ]}>
                     <View style={[isLandscape && { flex: 1, paddingRight: 24, alignItems: 'center' }]}>
                         <View style={[styles.logo, { backgroundColor: primStr }]}>
@@ -369,7 +371,7 @@ export default function PinLoginScreen({ onLogin }: Props) {
                     />
                 )}
             </ScrollView>
-        </SafeAreaView>
+        </View>
     );
 }
 
@@ -385,9 +387,10 @@ const styles = StyleSheet.create({
         paddingVertical: 20,
     },
     card: {
-        width: 360,
+        width: '100%',
+        maxWidth: 360,
         borderRadius: 28,
-        padding: 36,
+        padding: 28,
         alignItems: 'center',
     },
     logo: {

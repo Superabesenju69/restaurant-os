@@ -21,6 +21,8 @@ import { formatCurrency, CURRENCIES } from './src/utils/currency';
 import { resolveCombinationPrice } from './src/utils/recipeUtils';
 import { calculateVariationMaxStock, canIncrementCartItem } from './src/services/inventoryService';
 import { checkForUpdates } from "./src/utils/updateChecker";
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useSafePadding } from './src/utils/safeArea';
 
 function MainApp() {
   const screen = usePosStore(s => s.screen);
@@ -104,6 +106,7 @@ function MainApp() {
   const isLandscape = width > height;
   const isTablet = Math.min(width, height) >= 600;
   const isMobile = width < 768;
+  const { topPad, bottomPad } = useSafePadding();
   const [isFooterExpanded, setIsFooterExpanded] = useState(false);
 
   const [qtyPickerItem, setQtyPickerItem] = useState<any | null>(null);
@@ -333,10 +336,10 @@ function MainApp() {
   // Show loading indicator while loading tenant configuration
   if (tenantChecking) {
     return (
-      <SafeAreaView style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a' }}>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a', paddingTop: topPad, paddingBottom: bottomPad }}>
         <ActivityIndicator size="large" color="#0d9488" />
         <Text style={{ marginTop: 12, color: '#94a3b8', fontSize: 16 }}>Loading Restaurant OS...</Text>
-      </SafeAreaView>
+      </View>
     );
   }
 
@@ -363,15 +366,15 @@ function MainApp() {
 
   return (
     <ErrorBoundary fallbackRender={({ error }) => (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#fef2f2', padding: 20 }}>
+      <View style={{ flex: 1, backgroundColor: '#fef2f2', padding: 20, paddingTop: topPad + 20, paddingBottom: bottomPad + 20 }}>
         <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#dc2626' }}>{t('pos.error.crash', language)}</Text>
         <Text style={{ fontSize: 16, color: '#991b1b', marginTop: 10 }}>{String(error)}</Text>
         <TouchableOpacity onPress={() => setScreen('home')} style={{ marginTop: 20, backgroundColor: '#dc2626', padding: 16, borderRadius: 8 }}>
           <Text style={{ color: 'white', textAlign: 'center', fontWeight: 'bold' }}>{t('pos.error.go_home', language)}</Text>
         </TouchableOpacity>
-      </SafeAreaView>
+      </View>
     )}>
-      <SafeAreaView className="flex-1" style={{ backgroundColor: bgStr, paddingTop: Platform.OS === 'android' ? (RNStatusBar.currentHeight || 28) : 0 }}>
+      <View className="flex-1" style={{ backgroundColor: bgStr, paddingTop: topPad, paddingBottom: bottomPad }}>
         <StatusBar style="dark" />
 
         <View className="flex-1 flex-col md:flex-row">
@@ -642,39 +645,39 @@ function MainApp() {
 
             {/* CATEGORIES HEADER TABS */}
             <View className="bg-white border-b border-gray-200">
-              <View className="p-6 pb-4 flex-row justify-between items-center">
-                <Text className="text-2xl font-bold text-gray-900 tracking-tight">
+              <View className="p-3 md:p-6 pb-2 md:pb-4 flex-row justify-between items-center">
+                <Text className="text-lg md:text-2xl font-bold text-gray-900 tracking-tight flex-1 mr-2" numberOfLines={1}>
                   {inspectingItem ? `${t('pos.main.customize', language)} ${inspectingItem.item.name}` : t('pos.main.menu', language)}
                 </Text>
 
                 {inspectingItem && (
                   <TouchableOpacity
                     onPress={() => requestAnimationFrame(() => setInspectingCartItemId(null))}
-                    className="bg-gray-100 px-4 py-2 rounded-lg border border-gray-200"
+                    className="bg-gray-100 px-3 md:px-4 py-1.5 md:py-2 rounded-lg border border-gray-200"
                   >
-                    <Text className="font-bold text-gray-700">{t('pos.main.done_back', language)}</Text>
+                    <Text className="font-bold text-xs md:text-base text-gray-700">{t('pos.main.done_back', language)}</Text>
                   </TouchableOpacity>
                 )}
               </View>
 
               {!inspectingItem && categories.length > 0 && (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} className="px-6 pb-4 flex-row gap-2">
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} className="px-3 md:px-6 pb-2 md:pb-4 flex-row gap-2">
                   <TouchableOpacity
                     onPress={() => setActiveCategory(null)}
-                    className={`px-5 py-2.5 rounded-full border ${activeCategory === null ? '' : 'bg-white border-gray-200'}`}
+                    className={`px-4 md:px-5 py-2 md:py-2.5 rounded-full border ${activeCategory === null ? '' : 'bg-white border-gray-200'}`}
                     style={activeCategory === null ? { backgroundColor: tp[600], borderColor: tp[600] } : undefined}
                   >
-                    <Text className={`font-bold ${activeCategory === null ? 'text-white' : 'text-gray-700'}`}>{t('pos.main.all_items', language)}</Text>
+                    <Text className={`font-bold text-xs md:text-base ${activeCategory === null ? 'text-white' : 'text-gray-700'}`}>{t('pos.main.all_items', language)}</Text>
                   </TouchableOpacity>
 
                   {categories.map((cat: Category) => (
                     <TouchableOpacity
                       key={cat.id}
                       onPress={() => setActiveCategory(cat.id)}
-                      className={`px-5 py-2.5 rounded-full border ${activeCategory === cat.id ? '' : 'bg-white border-gray-200'}`}
+                      className={`px-4 md:px-5 py-2 md:py-2.5 rounded-full border ${activeCategory === cat.id ? '' : 'bg-white border-gray-200'}`}
                       style={activeCategory === cat.id ? { backgroundColor: tp[600], borderColor: tp[600] } : undefined}
                     >
-                      <Text className={`font-bold ${activeCategory === cat.id ? 'text-white' : 'text-gray-700'}`}>{cat.name}</Text>
+                      <Text className={`font-bold text-xs md:text-base ${activeCategory === cat.id ? 'text-white' : 'text-gray-700'}`}>{cat.name}</Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
@@ -682,7 +685,7 @@ function MainApp() {
             </View>
 
             {/* MAIN CONTENT AREA */}
-            <View className="flex-1 p-6">
+            <View className="flex-1 p-3 md:p-6">
               {isLoading ? (
                 <View className="flex-1 items-center justify-center">
                   <ActivityIndicator color={tp[600]} size="large" />
@@ -920,7 +923,7 @@ function MainApp() {
             </View>
           </View>
         </View>
-      </SafeAreaView>
+      </View>
 
       {/* Variation & Quantity Picker Modal — shown when tapping a menu item */}
       {!!qtyPickerItem && (
@@ -928,7 +931,7 @@ function MainApp() {
           <TouchableOpacity
             activeOpacity={1}
             onPress={() => setQtyPickerItem(null)}
-            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', paddingTop: topPad + 16, paddingBottom: bottomPad + 16, paddingHorizontal: 16 }}
           >
             <TouchableOpacity
               activeOpacity={1}
@@ -936,10 +939,10 @@ function MainApp() {
               style={{
                 backgroundColor: 'white',
                 borderRadius: 24,
-                padding: 24,
+                padding: isMobile ? 20 : 24,
                 width: '100%',
                 maxWidth: 440,
-                maxHeight: '90%',
+                maxHeight: '100%',
                 shadowColor: '#000',
                 shadowOpacity: 0.2,
                 shadowRadius: 25,
@@ -1197,14 +1200,14 @@ function MainApp() {
           <TouchableOpacity
             activeOpacity={1}
             onPress={() => setCustomizationItem(null)}
-            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}
+            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', paddingTop: topPad + 16, paddingBottom: bottomPad + 16, paddingHorizontal: 16 }}
           >
             <TouchableOpacity activeOpacity={1} onPress={(e: GestureResponderEvent) => e.stopPropagation()}
-              style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '90%', maxWidth: 500, maxHeight: '80%', shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 20 }}>
+              style={{ backgroundColor: 'white', borderRadius: 24, padding: isMobile ? 20 : 24, width: '100%', maxWidth: 500, maxHeight: '100%', shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 20 }}>
 
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <Text style={{ fontSize: 24, fontWeight: '900', color: '#111827' }}>{t('pos.custom.customize', language)} {customizationItem.name}</Text>
-                <TouchableOpacity onPress={() => setCustomizationItem(null)} style={{ backgroundColor: '#f3f4f6', padding: 8, borderRadius: 8 }}>
+                <Text style={{ flex: 1, fontSize: isMobile ? 20 : 24, fontWeight: '900', color: '#111827', marginRight: 8 }} numberOfLines={1}>{t('pos.custom.customize', language)} {customizationItem.name}</Text>
+                <TouchableOpacity onPress={() => setCustomizationItem(null)} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}>
                   <Text style={{ fontWeight: 'bold', color: '#374151' }}>✕</Text>
                 </TouchableOpacity>
               </View>
@@ -1366,11 +1369,11 @@ function MainApp() {
       {/* Promotions / Ofertas Modal */}
       {showPromosModal && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, elevation: 130, zIndex: 130 }}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' }}>
-            <View style={{ backgroundColor: 'white', borderRadius: 24, padding: 32, width: '90%', maxWidth: 600, maxHeight: '80%', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 30, shadowOffset: { width: 0, height: 10 } }}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', paddingTop: topPad + 16, paddingBottom: bottomPad + 16, paddingHorizontal: 16 }}>
+            <View style={{ backgroundColor: 'white', borderRadius: 24, padding: isMobile ? 20 : 32, width: '100%', maxWidth: 600, maxHeight: '100%', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 30, shadowOffset: { width: 0, height: 10 } }}>
 
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#f3f4f6', paddingBottom: 16, marginBottom: 20 }}>
-                <Text style={{ fontSize: 24, fontWeight: '900', color: '#111827' }}>{t('pos.promos.title', language)}</Text>
+                <Text style={{ flex: 1, fontSize: isMobile ? 20 : 24, fontWeight: '900', color: '#111827', marginRight: 8 }} numberOfLines={1}>{t('pos.promos.title', language)}</Text>
                 <TouchableOpacity onPress={() => setShowPromosModal(false)} style={{ backgroundColor: '#f3f4f6', padding: 10, borderRadius: 12 }}>
                   <Text style={{ fontWeight: 'bold', color: '#374151', fontSize: 18 }}>✕</Text>
                 </TouchableOpacity>
@@ -1482,11 +1485,11 @@ function MainApp() {
       {/* Checkout Split Payment Modal */}
       {showCheckoutModal && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, elevation: 120, zIndex: 120 }}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
-            <View style={{ backgroundColor: 'white', borderRadius: 24, padding: (isLandscape || isTablet) ? 32 : 20, width: '100%', maxWidth: 800, maxHeight: '92%', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 30, shadowOffset: { width: 0, height: 10 } }}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', paddingTop: topPad + 12, paddingBottom: bottomPad + 12, paddingHorizontal: 12 }}>
+            <View style={{ backgroundColor: 'white', borderRadius: 24, padding: (isLandscape || isTablet) ? 32 : 20, width: '100%', maxWidth: 800, maxHeight: '100%', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 30, shadowOffset: { width: 0, height: 10 } }}>
 
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#f3f4f6', paddingBottom: 16, marginBottom: 20 }}>
-                <Text style={{ fontSize: 24, fontWeight: '900', color: '#111827' }}>{t('pos.checkout.title', language)}</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#f3f4f6', paddingBottom: 14, marginBottom: 16 }}>
+                <Text style={{ flex: 1, fontSize: isMobile ? 20 : 24, fontWeight: '900', color: '#111827', marginRight: 8 }} numberOfLines={1}>{t('pos.checkout.title', language)}</Text>
                 <TouchableOpacity onPress={() => setShowCheckoutModal(false)} style={{ backgroundColor: '#f3f4f6', padding: 10, borderRadius: 12 }}>
                   <Text style={{ fontWeight: 'bold', color: '#374151', fontSize: 18 }}>✕</Text>
                 </TouchableOpacity>
@@ -1920,17 +1923,17 @@ function MainApp() {
       {/* Checkout Completion Receipt Modal (The main checkout confirmation) */}
       {showReceiptModal && lastCompletedOrder && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, elevation: 130, zIndex: 130 }}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', alignItems: 'center', justifyContent: 'center' }}>
-            <View style={{ backgroundColor: '#f8fafc', borderRadius: 8, width: 380, maxHeight: '90%', shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 40, overflow: 'hidden' }}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', alignItems: 'center', justifyContent: 'center', paddingTop: topPad + 16, paddingBottom: bottomPad + 16, paddingHorizontal: 16 }}>
+            <View style={{ backgroundColor: '#f8fafc', borderRadius: 12, width: '100%', maxWidth: 380, maxHeight: '100%', shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 40, overflow: 'hidden' }}>
 
-              <View style={{ backgroundColor: 'white', padding: 32, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: '#e2e8f0', borderStyle: 'dashed' }}>
-                <Text style={{ fontSize: 24, fontWeight: '900', color: '#0f172a', textTransform: 'uppercase', letterSpacing: 2 }}>{t('pos.receipt.title', language)}</Text>
+              <View style={{ backgroundColor: 'white', padding: isMobile ? 20 : 32, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: '#e2e8f0', borderStyle: 'dashed' }}>
+                <Text style={{ fontSize: isMobile ? 20 : 24, fontWeight: '900', color: '#0f172a', textTransform: 'uppercase', letterSpacing: 2 }}>{t('pos.receipt.title', language)}</Text>
                 <Text style={{ fontSize: 14, color: '#64748b', marginTop: 8 }}>{t('pos.lbl.order_prefix', language)} #{lastCompletedOrder.order_number}</Text>
                 {lastCompletedOrder.table_name && <Text style={{ fontSize: 14, color: '#64748b', fontWeight: 'bold' }}>{t('pos.receipt.table', language)} {lastCompletedOrder.table_name}</Text>}
                 <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>{new Date().toLocaleString()}</Text>
               </View>
 
-              <ScrollView style={{ backgroundColor: 'white', padding: 32 }} showsVerticalScrollIndicator={false}>
+              <ScrollView style={{ backgroundColor: 'white', padding: isMobile ? 20 : 32 }} showsVerticalScrollIndicator={false}>
 
                 <View style={{ marginBottom: 24 }}>
                   <Text style={{ fontSize: 13, fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>{t('pos.receipt.items', language)}</Text>
@@ -2128,9 +2131,11 @@ export default function App() {
   }, []);
 
   return (
-    <View style={{ flex: 1 }} className={themeColor === 'rose' ? 'theme-rose' : themeColor === 'amber' ? 'theme-amber' : themeColor === 'indigo' ? 'theme-indigo' : ''}>
-      <MainApp />
-      <Toast />
-    </View>
+    <SafeAreaProvider>
+      <View style={{ flex: 1 }} className={themeColor === 'rose' ? 'theme-rose' : themeColor === 'amber' ? 'theme-amber' : themeColor === 'indigo' ? 'theme-indigo' : ''}>
+        <MainApp />
+        <Toast />
+      </View>
+    </SafeAreaProvider>
   );
 }

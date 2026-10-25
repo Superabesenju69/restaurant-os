@@ -1,8 +1,9 @@
 import React, { useMemo } from "react";
 import { StatusBar } from 'expo-status-bar';
-import { View, Text, SafeAreaView, TouchableOpacity, ScrollView, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, useWindowDimensions } from 'react-native';
 import { usePosStore } from "../store/posStore";
 import { t } from '../utils/i18n';
+import { useSafePadding } from '../utils/safeArea';
 import type { Order, KitchenTicket, KitchenTicketItem } from '../types';
 
 interface ServingScreenProps {
@@ -12,7 +13,9 @@ interface ServingScreenProps {
 
 export default function ServingScreen({ bgStr, language }: ServingScreenProps) {
   const { width } = useWindowDimensions();
-  const cardWidth = width < 600 ? width - 40 : width < 900 ? (width - 56) / 2 : (width - 72) / 3;
+  const isMobile = width < 768;
+  const { topPad, bottomPad } = useSafePadding();
+  const cardWidth = width < 600 ? width - 32 : width < 900 ? (width - 56) / 2 : (width - 72) / 3;
 
   const setScreen = usePosStore(s => s.setScreen);
   const ordersList = usePosStore(s => s.ordersList);
@@ -37,19 +40,19 @@ export default function ServingScreen({ bgStr, language }: ServingScreenProps) {
   }, [ordersList, currentPosUser]);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: bgStr }}>
+    <View style={{ flex: 1, backgroundColor: bgStr }}>
       <StatusBar style="dark" />
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#e5e7eb', backgroundColor: 'white' }}>
-        <TouchableOpacity onPress={() => setScreen('home')} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}>
-          <Text style={{ fontWeight: 'bold', color: '#374151' }}>{t('pos.serving.back', language)}</Text>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: topPad + 12, paddingBottom: 14, paddingHorizontal: isMobile ? 14 : 24, borderBottomWidth: 1, borderBottomColor: '#e5e7eb', backgroundColor: 'white' }}>
+        <TouchableOpacity onPress={() => setScreen('home')} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: isMobile ? 12 : 16, paddingVertical: 8, borderRadius: 8 }}>
+          <Text style={{ fontWeight: 'bold', color: '#374151', fontSize: isMobile ? 13 : 14 }}>{t('pos.serving.back', language)}</Text>
         </TouchableOpacity>
-        <Text style={{ fontSize: 20, fontWeight: '900', color: '#111827' }}>{t('pos.serving.title', language)}</Text>
-        <TouchableOpacity onPress={() => usePosStore.getState().fetchOrders()} style={{ backgroundColor: '#ecfdf5', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}>
-          <Text style={{ fontWeight: 'bold', color: '#059669' }}>{t('pos.serving.refresh', language)}</Text>
+        <Text style={{ flex: 1, textAlign: 'center', fontSize: isMobile ? 17 : 20, fontWeight: '900', color: '#111827', marginHorizontal: 8 }} numberOfLines={1}>{t('pos.serving.title', language)}</Text>
+        <TouchableOpacity onPress={() => usePosStore.getState().fetchOrders()} style={{ backgroundColor: '#ecfdf5', paddingHorizontal: isMobile ? 12 : 16, paddingVertical: 8, borderRadius: 8 }}>
+          <Text style={{ fontWeight: 'bold', color: '#059669', fontSize: isMobile ? 13 : 14 }}>{t('pos.serving.refresh', language)}</Text>
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={{ flex: 1, padding: 20 }}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: isMobile ? 16 : 20, paddingBottom: bottomPad + 24 }}>
         {activeBatches.length === 0 ? (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', marginTop: 100 }}>
             <Text style={{ fontSize: 60, marginBottom: 16 }}>🏃</Text>
@@ -147,6 +150,6 @@ export default function ServingScreen({ bgStr, language }: ServingScreenProps) {
           </View>
         )}
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }

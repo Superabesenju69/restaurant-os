@@ -1,11 +1,12 @@
 import React, { useState } from "react";
 import { StatusBar } from 'expo-status-bar';
-import { View, Text, SafeAreaView, TouchableOpacity, ScrollView, Image, TextInput, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Image, TextInput, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
 import { usePosStore } from "../store/posStore";
 import { t } from '../utils/i18n';
 import type { FloorTable, Printer } from '../types';
 import TimeClockModal from "../components/TimeClockModal";
 import { formatCurrency } from '../utils/currency';
+import { useSafePadding } from '../utils/safeArea';
 import Toast from 'react-native-toast-message';
 
 interface HomeScreenProps {
@@ -19,6 +20,8 @@ interface HomeScreenProps {
 export default function HomeScreen({ bgStr, tp, language, mapWidth, mapHeight }: HomeScreenProps) {
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
+  const isMobile = width < 768;
+  const { topPad, bottomPad } = useSafePadding();
 
   const setScreen = usePosStore(s => s.setScreen);
   const tableServiceEnabled = usePosStore(s => s.tableServiceEnabled);
@@ -90,9 +93,9 @@ export default function HomeScreen({ bgStr, tp, language, mapWidth, mapHeight }:
   if (!currentPosUser) return null;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: bgStr }}>
+    <View style={{ flex: 1, backgroundColor: bgStr }}>
       <StatusBar style="dark" />
-      <ScrollView contentContainerStyle={{ flexGrow: 1, paddingVertical: 24, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' }} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={{ flexGrow: 1, paddingTop: topPad + 16, paddingBottom: bottomPad + 24, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' }} showsVerticalScrollIndicator={false}>
         
         {/* User + Header Bar */}
         <View style={{ width: '100%', maxWidth: 900, flexDirection: isLandscape ? 'row' : 'column', justifyContent: 'space-between', alignItems: isLandscape ? 'center' : 'stretch', gap: 12, marginBottom: 24 }}>
@@ -168,12 +171,12 @@ export default function HomeScreen({ bgStr, tp, language, mapWidth, mapHeight }:
 
       {/* Order Type Overlay */}
       {showOrderTypeModal && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', zIndex: 50, paddingTop: topPad + 16, paddingBottom: bottomPad + 16, paddingHorizontal: 16 }}>
           {orderCreationStep === 'table' && selectedOrderType === 'dine_in' ? (
-            <View style={{ backgroundColor: '#fdfbeb', borderRadius: 24, padding: 20, width: '95%', height: '90%', maxWidth: 1000, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 10, overflow: 'hidden' }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                <Text style={{ fontSize: 24, fontWeight: '900', color: '#111827' }}>{t('pos.modal.select_table_for', language)} {newOrderCustomerName}</Text>
-                <TouchableOpacity onPress={() => setOrderCreationStep('name')} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}>
+            <View style={{ backgroundColor: '#fdfbeb', borderRadius: 24, padding: isMobile ? 16 : 20, width: '100%', height: '100%', maxWidth: 1000, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 10, overflow: 'hidden' }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <Text style={{ flex: 1, fontSize: isMobile ? 18 : 24, fontWeight: '900', color: '#111827', marginRight: 8 }} numberOfLines={1}>{t('pos.modal.select_table_for', language)} {newOrderCustomerName}</Text>
+                <TouchableOpacity onPress={() => setOrderCreationStep('name')} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 }}>
                   <Text style={{ fontWeight: 'bold', color: '#374151' }}>{t('pos.modal.back', language).replace('←', '').trim()}</Text>
                 </TouchableOpacity>
               </View>
@@ -296,11 +299,11 @@ export default function HomeScreen({ bgStr, tp, language, mapWidth, mapHeight }:
 
       {/* Settings Modal */}
       {showSettingsModal && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 16 }}>
-          <View style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '100%', maxWidth: 500, maxHeight: '90%', shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 10 }}>
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', zIndex: 60, paddingTop: topPad + 16, paddingBottom: bottomPad + 16, paddingHorizontal: 16 }}>
+          <View style={{ backgroundColor: 'white', borderRadius: 24, padding: isMobile ? 20 : 24, width: '100%', maxWidth: 500, maxHeight: '100%', shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 10 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <Text style={{ fontSize: 22, fontWeight: '900', color: '#111827' }}>{t('pos.settings.title', language)}</Text>
-              <TouchableOpacity onPress={() => setShowSettingsModal(false)} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}>
+              <Text style={{ flex: 1, fontSize: isMobile ? 19 : 22, fontWeight: '900', color: '#111827', marginRight: 8 }} numberOfLines={1}>{t('pos.settings.title', language)}</Text>
+              <TouchableOpacity onPress={() => setShowSettingsModal(false)} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 }}>
                 <Text style={{ fontWeight: 'bold', color: '#374151' }}>{t('pos.settings.close', language)}</Text>
               </TouchableOpacity>
             </View>
@@ -410,15 +413,15 @@ export default function HomeScreen({ bgStr, tp, language, mapWidth, mapHeight }:
 
       {/* Cash Register Shift Modal */}
       {showCashRegisterModal && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <View style={{ backgroundColor: 'white', borderRadius: 24, padding: 32, width: '90%', maxWidth: 650, maxHeight: '90%', shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 15, elevation: 10 }}>
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', zIndex: 100, paddingTop: topPad + 16, paddingBottom: bottomPad + 16, paddingHorizontal: 16 }}>
+          <View style={{ backgroundColor: 'white', borderRadius: 24, padding: isMobile ? 20 : 32, width: '100%', maxWidth: 650, maxHeight: '100%', shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 15, elevation: 10 }}>
             
             {/* Modal Header */}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', paddingBottom: 16 }}>
-              <Text style={{ fontSize: 24, fontWeight: '900', color: '#111827' }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: isMobile ? 16 : 24, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', paddingBottom: 14 }}>
+              <Text style={{ flex: 1, fontSize: isMobile ? 19 : 24, fontWeight: '900', color: '#111827', marginRight: 8 }} numberOfLines={1}>
                 {language === 'es' ? '💵 Control de Caja' : '💵 Cash Register Drawer'}
               </Text>
-              <TouchableOpacity onPress={() => setShowCashRegisterModal(false)} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}>
+              <TouchableOpacity onPress={() => setShowCashRegisterModal(false)} style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 }}>
                 <Text style={{ fontWeight: 'bold', color: '#374151' }}>{t('pos.settings.close', language)}</Text>
               </TouchableOpacity>
             </View>
@@ -712,6 +715,6 @@ export default function HomeScreen({ bgStr, tp, language, mapWidth, mapHeight }:
           </View>
         </View>
       )}
-    </SafeAreaView >
+    </View>
   );
 }
