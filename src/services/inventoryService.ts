@@ -6,6 +6,7 @@
  */
 import { supabase } from '../utils/supabase';
 import { filterRecipesByVariation } from '../utils/recipeUtils';
+import { enqueueOfflineMutation, isNetworkError } from './offlineSyncService';
 
 import type { CartItem, CartItemIngredient, MenuItem, Recipe, ItemOptionChoice } from '../types';
 
@@ -57,7 +58,8 @@ export function checkItemAvailability(item: MenuItem, items: MenuItem[], allIngr
 async function applyStockChanges(
     changes: Record<string, number>,
     direction: 1 | -1,
-    set: (fn: (prev: { allIngredients: MenuItem[]; items: MenuItem[] }) => Partial<{ allIngredients: MenuItem[]; items: MenuItem[] }>) => void
+    set: (fn: (prev: { allIngredients: MenuItem[]; items: MenuItem[] }) => Partial<{ allIngredients: MenuItem[]; items: MenuItem[] }>) => void,
+    get?: () => any
 ) {
     const entries = Object.entries(changes).filter(([, qty]) => qty > 0);
     if (entries.length === 0) return;
@@ -78,47 +80,91 @@ async function applyStockChanges(
         };
     });
 
-    // 2. Atomic DB adjustment via adjust_item_stock RPC (with fallback)
+    const state = get ? get() : null;
+    const tenantId = state?.tenantId || null;
+
+    // 2. Atomic DB adjustment via adjust_item_stock RPC (with offline queue fallback)
     await Promise.all(
         entries.map(async ([itemId, qty]) => {
             const delta = -(qty * direction);
-            const { data: rpcStock, error: rpcError } = await supabase.rpc('adjust_item_stock', {
-                p_item_id: itemId,
-                p_delta: delta,
-            });
+            try {
+                if (state && state.isOnline === false) {
+                    const count = await enqueueOfflineMutation(tenantId, {
+                        type: 'ADJUST_STOCK',
+                        itemId,
+                        delta,
+                    });
+                    if (state) set(() => ({ pendingSyncCount: count } as any));
+                    return;
+                }
 
-            if (!rpcError) {
-                if (typeof rpcStock === 'number') {
+                const { data: rpcStock, error: rpcError } = await supabase.rpc('adjust_item_stock', {
+                    p_item_id: itemId,
+                    p_delta: delta,
+                });
+
+                if (!rpcError) {
+                    if (typeof rpcStock === 'number') {
+                        set((prev: { allIngredients: MenuItem[]; items: MenuItem[] }) => ({
+                            allIngredients: prev.allIngredients.map((i: MenuItem) =>
+                                i.id === itemId ? { ...i, stock_level: rpcStock } : i
+                            ),
+                            items: prev.items.map((i: MenuItem) =>
+                                i.id === itemId ? { ...i, stock_level: rpcStock } : i
+                            ),
+                        }));
+                    }
+                    return;
+                }
+
+                if (isNetworkError(rpcError)) {
+                    const count = await enqueueOfflineMutation(tenantId, {
+                        type: 'ADJUST_STOCK',
+                        itemId,
+                        delta,
+                    });
+                    set(() => ({ isOnline: false, pendingSyncCount: count } as any));
+                    return;
+                }
+
+                // Fallback if RPC is not yet deployed
+                const { data: currentItem, error: selErr } = await supabase
+                    .from('items')
+                    .select('stock_level, track_inventory')
+                    .eq('id', itemId)
+                    .single();
+
+                if (selErr && isNetworkError(selErr)) {
+                    const count = await enqueueOfflineMutation(tenantId, {
+                        type: 'ADJUST_STOCK',
+                        itemId,
+                        delta,
+                    });
+                    set(() => ({ isOnline: false, pendingSyncCount: count } as any));
+                    return;
+                }
+
+                if (currentItem?.track_inventory) {
+                    const newStock = Math.max(0, (currentItem.stock_level ?? 0) - (qty * direction));
+                    await supabase.from('items').update({ stock_level: newStock }).eq('id', itemId);
                     set((prev: { allIngredients: MenuItem[]; items: MenuItem[] }) => ({
                         allIngredients: prev.allIngredients.map((i: MenuItem) =>
-                            i.id === itemId ? { ...i, stock_level: rpcStock } : i
+                            i.id === itemId ? { ...i, stock_level: newStock } : i
                         ),
                         items: prev.items.map((i: MenuItem) =>
-                            i.id === itemId ? { ...i, stock_level: rpcStock } : i
+                            i.id === itemId ? { ...i, stock_level: newStock } : i
                         ),
                     }));
                 }
-                return;
-            }
-
-            // Fallback if RPC is not yet deployed
-            const { data: currentItem } = await supabase
-                .from('items')
-                .select('stock_level, track_inventory')
-                .eq('id', itemId)
-                .single();
-
-            if (currentItem?.track_inventory) {
-                const newStock = Math.max(0, (currentItem.stock_level ?? 0) - (qty * direction));
-                await supabase.from('items').update({ stock_level: newStock }).eq('id', itemId);
-                set((prev: { allIngredients: MenuItem[]; items: MenuItem[] }) => ({
-                    allIngredients: prev.allIngredients.map((i: MenuItem) =>
-                        i.id === itemId ? { ...i, stock_level: newStock } : i
-                    ),
-                    items: prev.items.map((i: MenuItem) =>
-                        i.id === itemId ? { ...i, stock_level: newStock } : i
-                    ),
-                }));
+            } catch (err) {
+                if (isNetworkError(err)) {
+                    const count = await enqueueOfflineMutation(tenantId, {
+                        type: 'ADJUST_STOCK',
+                        itemId,
+                        delta,
+                    });
+                    set(() => ({ isOnline: false, pendingSyncCount: count } as any));
+                }
             }
         })
     );
@@ -303,11 +349,11 @@ export function canChangeCartItemVariation(
 export async function deductInventoryForCartItem(
     cartItem: CartItem,
     multiplier: number,
-    _get: () => unknown,
+    get: () => unknown,
     set: (fn: (prev: { allIngredients: MenuItem[]; items: MenuItem[] }) => Partial<{ allIngredients: MenuItem[]; items: MenuItem[] }>) => void
 ) {
     const deductions = buildDeductionMap(cartItem, multiplier);
-    await applyStockChanges(deductions, 1, set);
+    await applyStockChanges(deductions, 1, set, get as () => any);
 }
 
 /**
@@ -318,11 +364,11 @@ export async function deductInventoryForCartItem(
 export async function refundInventoryForCartItem(
     cartItem: CartItem,
     multiplier: number,
-    _get: () => unknown,
+    get: () => unknown,
     set: (fn: (prev: { allIngredients: MenuItem[]; items: MenuItem[] }) => Partial<{ allIngredients: MenuItem[]; items: MenuItem[] }>) => void
 ) {
     const refunds = buildDeductionMap(cartItem, multiplier);
-    await applyStockChanges(refunds, -1, set);
+    await applyStockChanges(refunds, -1, set, get as () => any);
 }
 
 /**
@@ -333,7 +379,8 @@ export async function adjustSingleIngredientStock(
     ingredientId: string,
     qty: number,
     direction: 1 | -1,
-    set: (fn: (prev: { allIngredients: MenuItem[]; items: MenuItem[] }) => Partial<{ allIngredients: MenuItem[]; items: MenuItem[] }>) => void
+    set: (fn: (prev: { allIngredients: MenuItem[]; items: MenuItem[] }) => Partial<{ allIngredients: MenuItem[]; items: MenuItem[] }>) => void,
+    get?: () => unknown
 ) {
-    await applyStockChanges({ [ingredientId]: qty }, direction, set);
+    await applyStockChanges({ [ingredientId]: qty }, direction, set, get as () => any);
 }

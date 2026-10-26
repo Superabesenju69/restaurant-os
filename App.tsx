@@ -15,6 +15,7 @@ import OrdersScreen from "./src/screens/OrdersScreen";
 import MenuCard from "./src/components/MenuCard";
 import CartItemRow from "./src/components/CartItemRow";
 import IngredientEditor from "./src/components/IngredientEditor";
+import SyncStatusBar from "./src/components/SyncStatusBar";
 import Toast from 'react-native-toast-message';
 import { t } from './src/utils/i18n';
 import { formatCurrency, CURRENCIES } from './src/utils/currency';
@@ -382,8 +383,11 @@ function MainApp() {
           <View className="w-full md:w-[35%] h-[48%] md:h-full bg-white border-b md:border-b-0 md:border-r border-gray-200 shadow-sm z-10 flex-col">
             <View className="p-3 md:p-6 border-b border-gray-100 flex-col justify-between bg-white z-20 shadow-sm relative">
               <View className="flex-row items-center justify-between w-full">
-                <View>
-                  <Text className="text-xl md:text-3xl font-black text-gray-900 tracking-tight">{t('pos.lbl.order_prefix', language)} #{activeOrderNumber}</Text>
+                <View className="flex-1 pr-2">
+                  <View className="flex-row items-center gap-2 flex-wrap">
+                    <Text className="text-xl md:text-3xl font-black text-gray-900 tracking-tight">{t('pos.lbl.order_prefix', language)} #{activeOrderNumber}</Text>
+                    <SyncStatusBar />
+                  </View>
                   <Text className="text-xs md:text-sm font-semibold mt-1 uppercase tracking-wider" style={{ color: tp[600] }}>
                     {activeOrderCustomer ? `👤 ${activeOrderCustomer} — ` : ''}
                     {activeOrderType === 'dine_in' && activeOrderTable

@@ -41,6 +41,17 @@ import {
 } from '../services/inventoryService';
 import { printCustomerReceipt as printCustomerReceiptImpl, triggerCashDrawer as triggerCashDrawerImpl } from '../services/printerService';
 import { decodeRecipeVariation, resolveCombinationPrice, filterRecipesByVariation } from '../utils/recipeUtils';
+import {
+    generateUUID,
+    isNetworkError,
+    saveLocalCache,
+    loadLocalCache,
+    getNextLocalOrderNumber,
+    syncLocalOrderSequence,
+    getOfflineQueue,
+    enqueueOfflineMutation,
+    flushOfflineQueue,
+} from '../services/offlineSyncService';
 import type {
     ScreenName, OrderType,
     MenuItem, ItemOption, ItemOptionChoice, Recipe,
@@ -114,6 +125,16 @@ export interface PosState {
     activeCashShift: CashShift | null;
     showCashRegisterModal: boolean;
     usdExchangeRate: number;
+
+    // Offline-First Sync & Cached Station Metadata
+    isOnline: boolean;
+    pendingSyncCount: number;
+    isSyncingOfflineQueue: boolean;
+    kitchenStations: any[];
+    expediterSettings: {
+        expediter_output_mode: string | null;
+        expediter_printer_id: string | null;
+    };
 }
 
 export interface PosActions {
@@ -145,6 +166,9 @@ export interface PosActions {
     startOrder: (type: OrderType, table?: FloorTable, customerName?: string) => Promise<void>;
     loadOrder: (order: Order) => Promise<void>;
     saveOrder: () => Promise<void>;
+    debouncedSaveOrder: () => void;
+    syncOfflineQueue: () => Promise<void>;
+    setOnlineStatus: (online: boolean) => void;
     updateTicketItemStatus: (itemId: string, status: string) => Promise<void>;
     markExpediterBatchComplete: (batchId: string) => Promise<void>;
     voidOrder: (orderId: string) => Promise<void>;
@@ -180,6 +204,7 @@ export type PosStore = PosState & PosActions;
 
 // Guard to prevent concurrent saveOrder calls that cause Hermes OOM during JSON.stringify
 let _saveInProgress = false;
+let _saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 // --- Delegated to inventoryService.ts ---
 const checkItemAvailability = checkItemAvailabilityImpl;
@@ -211,6 +236,58 @@ export const usePosStore = create<PosStore>()(
 
     currentPosUser: null,
     usdExchangeRate: 36.00,
+
+    // Offline-First Sync & Cached Station Metadata
+    isOnline: true,
+    pendingSyncCount: 0,
+    isSyncingOfflineQueue: false,
+    kitchenStations: [],
+    expediterSettings: {
+        expediter_output_mode: null,
+        expediter_printer_id: null,
+    },
+
+    setOnlineStatus: (online: boolean) => {
+        const wasOffline = !get().isOnline;
+        set({ isOnline: online });
+        if (online && wasOffline) {
+            get().syncOfflineQueue();
+        }
+    },
+
+    syncOfflineQueue: async () => {
+        const tenantId = get().tenantId;
+        if (!tenantId || get().isSyncingOfflineQueue) return;
+        const queue = await getOfflineQueue(tenantId);
+        set({ pendingSyncCount: queue.length });
+        if (queue.length === 0) return;
+
+        set({ isSyncingOfflineQueue: true });
+        try {
+            const res = await flushOfflineQueue(tenantId);
+            set({
+                pendingSyncCount: res.remaining,
+                isOnline: res.online,
+                isSyncingOfflineQueue: false,
+            });
+            if (res.synced > 0 && res.online) {
+                get().fetchOrders();
+                get().fetchSettings();
+            }
+        } catch {
+            set({ isSyncingOfflineQueue: false });
+        }
+    },
+
+    debouncedSaveOrder: () => {
+        if (_saveDebounceTimer) {
+            clearTimeout(_saveDebounceTimer);
+        }
+        _saveDebounceTimer = setTimeout(() => {
+            _saveDebounceTimer = null;
+            get().saveOrder();
+        }, 550);
+    },
 
     // Promotions Engine defaults
     availablePromotions: [],
@@ -584,74 +661,226 @@ export const usePosStore = create<PosStore>()(
     fetchSettings: async () => {
         const localLang = await AsyncStorage.getItem('pos_language');
         const localRate = await AsyncStorage.getItem('pos_usd_exchange_rate');
+        const tenantId = get().tenantId;
 
-        const { data: settingsData } = await supabase.from('restaurant_settings').select('*').limit(1);
-        const settings = settingsData && settingsData.length > 0 ? settingsData[0] : null;
-        const { data: tablesData } = await supabase.from('tables').select('*').order('name');
-        const { data: zonesData } = await supabase.from('table_zones').select('*').order('display_order');
-        const { data: printers } = await supabase.from('printers').select('*').order('name');
+        const queue = await getOfflineQueue(tenantId);
+        set({ pendingSyncCount: queue.length });
 
-        const cs = settings?.attendance_settings?.currency_settings || settings?.currency_settings;
-        const ts = settings?.attendance_settings?.tax_settings || settings?.tax_settings;
-        const zoneBg = settings?.attendance_settings?.zone_backgrounds || settings?.zone_backgrounds || {};
+        const applySettingsSnapshot = (
+            settings: any,
+            tablesData: any[],
+            zonesData: any[],
+            printers: any[],
+            stationsData: any[]
+        ) => {
+            const cs = settings?.attendance_settings?.currency_settings || settings?.currency_settings;
+            const ts = settings?.attendance_settings?.tax_settings || settings?.tax_settings;
+            const zoneBg = settings?.attendance_settings?.zone_backgrounds || settings?.zone_backgrounds || {};
 
-        const remoteRate = cs?.exchange_rate ?? settings?.exchange_rate;
-        const parsedRate = remoteRate ? Number(remoteRate) : (localRate ? parseFloat(localRate) : 36.80);
+            const remoteRate = cs?.exchange_rate ?? settings?.exchange_rate;
+            const parsedRate = remoteRate ? Number(remoteRate) : (localRate ? parseFloat(localRate) : 36.80);
 
-        set({
-            tableServiceEnabled: settings?.enable_table_service || false,
-            mapBackgroundUrl: settings?.map_background_url || null,
-            themeColor: settings?.theme_color || 'teal',
-            themeMode: settings?.theme_mode || 'light',
-            language: localLang || settings?.language || 'es',
-            currency: settings?.currency || 'USD',
-            secondaryCurrency: cs?.secondary_currency || settings?.secondary_currency || 'USD',
-            enableSecondaryCurrency: cs?.enable_secondary_currency ?? settings?.enable_secondary_currency ?? false,
-            usdExchangeRate: parsedRate,
-            enableTax: ts?.enable_tax ?? settings?.enable_tax ?? true,
-            taxRate: ts?.tax_rate ?? settings?.tax_rate ?? 15,
-            pricesIncludeTax: ts?.prices_include_tax ?? settings?.prices_include_tax ?? false,
-            tables: tablesData || [],
-            zones: zonesData || [],
-            zoneBackgrounds: zoneBg,
-            printers: printers || [],
-            receiptTemplate: settings?.receipt_template || get().receiptTemplate,
-            attendanceSettings: settings?.attendance_settings || get().attendanceSettings,
-        });
+            set({
+                tableServiceEnabled: settings?.enable_table_service || false,
+                mapBackgroundUrl: settings?.map_background_url || null,
+                themeColor: settings?.theme_color || 'teal',
+                themeMode: settings?.theme_mode || 'light',
+                language: localLang || settings?.language || 'es',
+                currency: settings?.currency || 'USD',
+                secondaryCurrency: cs?.secondary_currency || settings?.secondary_currency || 'USD',
+                enableSecondaryCurrency: cs?.enable_secondary_currency ?? settings?.enable_secondary_currency ?? false,
+                usdExchangeRate: parsedRate,
+                enableTax: ts?.enable_tax ?? settings?.enable_tax ?? true,
+                taxRate: ts?.tax_rate ?? settings?.tax_rate ?? 15,
+                pricesIncludeTax: ts?.prices_include_tax ?? settings?.prices_include_tax ?? false,
+                tables: tablesData || [],
+                zones: zonesData || [],
+                zoneBackgrounds: zoneBg,
+                printers: printers || [],
+                kitchenStations: stationsData || [],
+                expediterSettings: {
+                    expediter_output_mode: settings?.expediter_output_mode || null,
+                    expediter_printer_id: settings?.expediter_printer_id || null,
+                },
+                receiptTemplate: settings?.receipt_template || get().receiptTemplate,
+                attendanceSettings: settings?.attendance_settings || get().attendanceSettings,
+            });
+        };
+
+        try {
+            const { data: settingsData, error: settingsErr } = await supabase.from('restaurant_settings').select('*').limit(1);
+            if (settingsErr && isNetworkError(settingsErr)) throw settingsErr;
+
+            const settings = settingsData && settingsData.length > 0 ? settingsData[0] : null;
+            const { data: tablesData } = await supabase.from('tables').select('*').order('name');
+            const { data: zonesData } = await supabase.from('table_zones').select('*').order('display_order');
+            const { data: printers } = await supabase.from('printers').select('*').order('name');
+            const { data: stationsData } = await supabase.from('kitchen_stations').select('id, name, color, output_mode, printer_id');
+
+            // Also cache POS staff PIN list for offline PIN login
+            const { data: usersData } = await supabase
+                .from('usuarios')
+                .select('id, nombre, apellido, role, pin, active')
+                .eq('active', true);
+            if (usersData && usersData.length > 0) {
+                await saveLocalCache(tenantId, 'pos_users', usersData);
+            }
+
+            applySettingsSnapshot(
+                settings,
+                tablesData || [],
+                zonesData || [],
+                printers || [],
+                stationsData || []
+            );
+            set({ isOnline: true });
+
+            await saveLocalCache(tenantId, 'settings_catalog', {
+                settings,
+                tablesData: tablesData || [],
+                zonesData: zonesData || [],
+                printers: printers || [],
+                stationsData: stationsData || [],
+            });
+
+            if (queue.length > 0) {
+                get().syncOfflineQueue();
+            }
+        } catch (err) {
+            console.warn('[fetchSettings] Offline fallback activated:', err);
+            set({ isOnline: false });
+            const cached = await loadLocalCache<{
+                settings: any;
+                tablesData: any[];
+                zonesData: any[];
+                printers: any[];
+                stationsData: any[];
+            }>(tenantId, 'settings_catalog');
+            if (cached) {
+                applySettingsSnapshot(
+                    cached.settings,
+                    cached.tablesData || [],
+                    cached.zonesData || [],
+                    cached.printers || [],
+                    cached.stationsData || []
+                );
+            }
+        }
     },
 
     startOrder: async (type, table, customerName) => {
-        const currentUser = get().currentPosUser;
-        const { data: order, error } = await supabase
-            .from('orders')
-            .insert([{
+        const state = get();
+        const currentUser = state.currentPosUser;
+        const tenantId = state.tenantId;
+        const clientOrderId = generateUUID();
+        const localOrderNum = await getNextLocalOrderNumber(tenantId, state.ordersList);
+
+        let createdOrder: any = null;
+        let workedOnline = false;
+
+        if (state.isOnline !== false) {
+            try {
+                const { data: order, error } = await supabase
+                    .from('orders')
+                    .insert([{
+                        id: clientOrderId,
+                        type,
+                        table_id: table?.id || null,
+                        customer_name: customerName || null,
+                        status: 'open',
+                        total_amount: 0,
+                        user_id: currentUser?.id || null
+                    }])
+                    .select()
+                    .single();
+
+                if (!error && order) {
+                    createdOrder = order;
+                    workedOnline = true;
+                    await syncLocalOrderSequence(tenantId, order.order_number);
+                } else if (error && !isNetworkError(error)) {
+                    console.error('Failed to create order:', error);
+                    return;
+                }
+            } catch (e) {
+                console.warn('[startOrder] Network error, creating order offline:', e);
+            }
+        }
+
+        if (!createdOrder) {
+            createdOrder = {
+                id: clientOrderId,
+                order_number: localOrderNum,
                 type,
                 table_id: table?.id || null,
                 customer_name: customerName || null,
                 status: 'open',
                 total_amount: 0,
-                user_id: currentUser?.id || null
-            }])
-            .select()
-            .single();
-
-        if (error || !order) {
-            console.error('Failed to create order:', error);
-            return;
+                user_id: currentUser?.id || null,
+                tenant_id: tenantId,
+                created_at: new Date().toISOString(),
+                order_line_items: [],
+                kitchen_tickets: [],
+                payments: [],
+            };
+            const count = await enqueueOfflineMutation(tenantId, {
+                type: 'UPSERT_ORDER',
+                order: {
+                    id: createdOrder.id,
+                    type: createdOrder.type,
+                    table_id: createdOrder.table_id,
+                    customer_name: createdOrder.customer_name,
+                    status: 'open',
+                    total_amount: 0,
+                    user_id: createdOrder.user_id,
+                    tenant_id: tenantId,
+                },
+                lineItems: [],
+            });
+            set({ isOnline: false, pendingSyncCount: count });
         }
 
-        // If dine-in, mark the table as occupied
+        // If dine-in, mark the table as occupied immediately in local state + DB/Queue
         if (type === 'dine_in' && table) {
-            await supabase.from('tables').update({ status: 'occupied' }).eq('id', table.id);
             set(prev => ({ tables: prev.tables.map((t: any) => t.id === table.id ? { ...t, status: 'occupied' } : t) }));
+            if (workedOnline) {
+                try {
+                    await supabase.from('tables').update({ status: 'occupied' }).eq('id', table.id);
+                } catch {
+                    const count = await enqueueOfflineMutation(tenantId, {
+                        type: 'UPDATE_TABLE_STATUS',
+                        tableId: table.id,
+                        status: 'occupied',
+                    });
+                    set({ pendingSyncCount: count });
+                }
+            } else {
+                const count = await enqueueOfflineMutation(tenantId, {
+                    type: 'UPDATE_TABLE_STATUS',
+                    tableId: table.id,
+                    status: 'occupied',
+                });
+                set({ pendingSyncCount: count });
+            }
         }
+
+        const displayNum = createdOrder.order_number || localOrderNum || createdOrder.id.slice(0, 6).toUpperCase();
+        const enrichedNewOrder = {
+            ...createdOrder,
+            order_number: displayNum,
+            table_name: table?.name || null,
+            order_line_items: createdOrder.order_line_items || [],
+        };
+        const updatedOrdersList = [enrichedNewOrder, ...get().ordersList.filter(o => o.id !== createdOrder.id)];
+        await saveLocalCache(tenantId, 'orders_list', updatedOrdersList);
 
         set({
-            activeOrderId: order.id,
+            ordersList: updatedOrdersList,
+            activeOrderId: createdOrder.id,
             activeOrderType: type,
             activeOrderTable: table || null,
-            activeOrderCustomer: order.customer_name || null,
-            activeOrderNumber: order.order_number || order.id.slice(0, 6).toUpperCase(),
+            activeOrderCustomer: createdOrder.customer_name || null,
+            activeOrderNumber: String(displayNum),
             cart: [],
             inspectingCartItemId: null,
             inspectingSubItemId: null,
@@ -660,18 +889,53 @@ export const usePosStore = create<PosStore>()(
     },
 
     updateTableStatus: async (tableId, status, reservedBy = undefined, reservedAt = undefined) => {
+        const tenantId = get().tenantId;
         // Update local state immediately
         set(prev => ({
             tables: prev.tables.map((t: any) =>
                 t.id === tableId ? { ...t, status, reserved_by: reservedBy, reserved_at: reservedAt } : t
             )
         }));
-        // Update DB
-        await supabase.from('tables').update({
-            status,
-            reserved_by: reservedBy,
-            reserved_at: reservedAt
-        }).eq('id', tableId);
+        // Update DB or enqueue offline
+        try {
+            if (get().isOnline === false) {
+                const count = await enqueueOfflineMutation(tenantId, {
+                    type: 'UPDATE_TABLE_STATUS',
+                    tableId,
+                    status,
+                    reservedBy: reservedBy || null,
+                    reservedAt: reservedAt || null,
+                });
+                set({ pendingSyncCount: count });
+                return;
+            }
+            const { error } = await supabase.from('tables').update({
+                status,
+                reserved_by: reservedBy,
+                reserved_at: reservedAt
+            }).eq('id', tableId);
+            if (error && isNetworkError(error)) {
+                const count = await enqueueOfflineMutation(tenantId, {
+                    type: 'UPDATE_TABLE_STATUS',
+                    tableId,
+                    status,
+                    reservedBy: reservedBy || null,
+                    reservedAt: reservedAt || null,
+                });
+                set({ isOnline: false, pendingSyncCount: count });
+            }
+        } catch (err) {
+            if (isNetworkError(err)) {
+                const count = await enqueueOfflineMutation(tenantId, {
+                    type: 'UPDATE_TABLE_STATUS',
+                    tableId,
+                    status,
+                    reservedBy: reservedBy || null,
+                    reservedAt: reservedAt || null,
+                });
+                set({ isOnline: false, pendingSyncCount: count });
+            }
+        }
     },
 
     reserveTable: async (tableId, guestName, dateStr) => {
@@ -679,6 +943,10 @@ export const usePosStore = create<PosStore>()(
     },
 
     saveOrder: async () => {
+        if (_saveDebounceTimer) {
+            clearTimeout(_saveDebounceTimer);
+            _saveDebounceTimer = null;
+        }
         // Prevent concurrent saves — overlapping JSON.stringify calls can exhaust Hermes heap
         if (_saveInProgress) return;
         _saveInProgress = true;
@@ -686,7 +954,7 @@ export const usePosStore = create<PosStore>()(
             // Re-run tax and promotion mathematics specifically right before saving state to DB
             get().recalculateCartMath();
             
-            const { activeOrderId, cart } = get();
+            const { activeOrderId, cart, tenantId, activeOrderType, activeOrderTable, activeOrderCustomer, currentPosUser } = get();
             if (!activeOrderId) { _saveInProgress = false; return; }
 
             // Helper: strip an item down to only the fields needed for display / logic.
@@ -709,7 +977,6 @@ export const usePosStore = create<PosStore>()(
                 extra: ing.extra,
             });
 
-            let totalAmount = 0;
             const lineItemsToInsert = cart.map(cartItem => {
                 let unitPrice = cartItem.item.base_price;
 
@@ -825,23 +1092,75 @@ export const usePosStore = create<PosStore>()(
             // Extract unique promotions used in this order
             const appliedPromotions = [...new Set(lineItemsToInsert.map(c => c.promotion_id).filter(Boolean))];
 
-            // Delete existing lines to replace with current cart state
-            await supabase.from('order_line_items').delete().eq('order_id', activeOrderId);
-
-            if (lineItemsToInsert.length > 0) {
-                await supabase.from('order_line_items').insert(lineItemsToInsert);
-            }
-
-            // Update order total and DGI properties
-            await supabase.from('orders').update({ 
-                total_amount: totalNeto, // Keep total_amount synced with total_neto for backwards compatibility
+            const orderUpdatePayload = {
+                total_amount: totalNeto,
                 subtotal_bruto: subtotalBruto,
                 total_descuentos: totalDescuentos,
                 base_imponible_iva: baseImponibleIva,
                 monto_iva: montoIva,
                 total_neto: totalNeto,
                 applied_promotions: appliedPromotions.length > 0 ? appliedPromotions : null
-            }).eq('id', activeOrderId);
+            };
+
+            // Always keep local ordersList + AsyncStorage cache updated immediately
+            const updatedOrdersList = get().ordersList.map((o: any) =>
+                o.id === activeOrderId
+                    ? { ...o, ...orderUpdatePayload, order_line_items: lineItemsToInsert }
+                    : o
+            );
+            set({ ordersList: updatedOrdersList });
+            await saveLocalCache(tenantId, 'orders_list', updatedOrdersList);
+
+            const enqueueOrderSave = async () => {
+                const count = await enqueueOfflineMutation(tenantId, {
+                    type: 'UPSERT_ORDER',
+                    order: {
+                        id: activeOrderId,
+                        type: activeOrderType,
+                        table_id: activeOrderTable?.id || null,
+                        customer_name: activeOrderCustomer || null,
+                        status: 'open',
+                        user_id: currentPosUser?.id || null,
+                        tenant_id: tenantId,
+                        ...orderUpdatePayload,
+                    },
+                    lineItems: lineItemsToInsert,
+                });
+                set({ isOnline: false, pendingSyncCount: count });
+            };
+
+            if (get().isOnline === false) {
+                await enqueueOrderSave();
+                return;
+            }
+
+            try {
+                // Delete existing lines to replace with current cart state
+                const { error: delErr } = await supabase.from('order_line_items').delete().eq('order_id', activeOrderId);
+                if (delErr && isNetworkError(delErr)) {
+                    await enqueueOrderSave();
+                    return;
+                }
+
+                if (lineItemsToInsert.length > 0) {
+                    const { error: insErr } = await supabase.from('order_line_items').insert(lineItemsToInsert);
+                    if (insErr && isNetworkError(insErr)) {
+                        await enqueueOrderSave();
+                        return;
+                    }
+                }
+
+                // Update order total and DGI properties
+                const { error: updErr } = await supabase.from('orders').update(orderUpdatePayload).eq('id', activeOrderId);
+                if (updErr && isNetworkError(updErr)) {
+                    await enqueueOrderSave();
+                    return;
+                }
+            } catch (err) {
+                if (isNetworkError(err)) {
+                    await enqueueOrderSave();
+                }
+            }
         } finally {
             _saveInProgress = false;
         }
@@ -877,38 +1196,85 @@ export const usePosStore = create<PosStore>()(
     },
 
     voidOrder: async (orderId: string) => {
-        // Void the order by setting status to 'void'
-        await supabase.from('orders').update({ status: 'void' }).eq('id', orderId);
+        const tenantId = get().tenantId;
+        const targetOrder = get().ordersList.find((o: any) => o.id === orderId);
+        const updatedList = get().ordersList.map((o: any) =>
+            o.id === orderId ? { ...o, status: 'void' } : o
+        );
+        set({ ordersList: updatedList });
+        await saveLocalCache(tenantId, 'orders_list', updatedList);
 
-        // We also want to archive the kitchen tickets so the kitchen isn't cooking a void order
-        await supabase.from('kitchen_tickets').update({ status: 'archived' }).eq('order_id', orderId);
+        try {
+            if (get().isOnline === false) {
+                const count = await enqueueOfflineMutation(tenantId, {
+                    type: 'VOID_ORDER',
+                    orderId,
+                    tableId: targetOrder?.table_id || null,
+                });
+                set({ pendingSyncCount: count });
+            } else {
+                const { error } = await supabase.from('orders').update({ status: 'void' }).eq('id', orderId);
+                if (error && isNetworkError(error)) {
+                    const count = await enqueueOfflineMutation(tenantId, {
+                        type: 'VOID_ORDER',
+                        orderId,
+                        tableId: targetOrder?.table_id || null,
+                    });
+                    set({ isOnline: false, pendingSyncCount: count });
+                } else {
+                    await supabase.from('kitchen_tickets').update({ status: 'archived' }).eq('order_id', orderId);
+                }
+            }
+        } catch (err) {
+            if (isNetworkError(err)) {
+                const count = await enqueueOfflineMutation(tenantId, {
+                    type: 'VOID_ORDER',
+                    orderId,
+                    tableId: targetOrder?.table_id || null,
+                });
+                set({ isOnline: false, pendingSyncCount: count });
+            }
+        }
 
-        // Note: Voided orders might need their inventory refunded eventually, but for now we just change the state.
         const currentActiveId = get().activeOrderId;
         if (currentActiveId === orderId) {
             get().clearCart();
             get().setScreen('home');
-        } else {
+        } else if (get().isOnline) {
             get().fetchOrders();
         }
     },
 
     loadOrder: async (order) => {
-        // Load existing open order back into the cart
-        const { data: lines } = await supabase
-            .from('order_line_items')
-            .select('*')
-            .eq('order_id', order.id);
+        // Load existing open order back into the cart (with offline fallback to order.order_line_items)
+        let lines: any[] | null = null;
+        if (get().isOnline !== false) {
+            try {
+                const { data, error } = await supabase
+                    .from('order_line_items')
+                    .select('*')
+                    .eq('order_id', order.id);
+                if (!error && data) {
+                    lines = data;
+                }
+            } catch {
+                // Fall back to cached order_line_items below
+            }
+        }
+        if (!lines || lines.length === 0) {
+            lines = (order as any).order_line_items || [];
+        }
+
         const allStoreItems = [...get().items, ...get().allIngredients];
 
-        const cartItems: CartItem[] = (lines || []).map((line: Record<string, unknown>) => {
+        const cartItems: CartItem[] = (lines || []).map((line: Record<string, unknown>, idx: number) => {
             const mods = (line.modifications || {}) as Record<string, unknown>;
             const found = allStoreItems.find(i => i.id === line.item_id);
             const slimItem: MenuItem = found
-                ? { id: found.id, name: found.name, base_price: found.base_price, type: found.type }
+                ? { id: found.id, name: found.name, base_price: found.base_price, type: found.type, track_inventory: found.track_inventory, options: found.options, combination_prices: found.combination_prices }
                 : { id: line.item_id as string, name: 'Item', base_price: 0, type: 'product' };
             return {
-                cart_id: line.id as string,
+                cart_id: (line.id as string) || `cached_${idx}_${Date.now()}`,
                 item: slimItem,
                 quantity: line.quantity as number,
                 sentQuantity: (mods.sentQuantity as number) ?? 0,
@@ -1000,8 +1366,32 @@ export const usePosStore = create<PosStore>()(
         if (!background) {
             set({ isLoading: true });
         }
+        const tenantId = get().tenantId;
+
+        const processItems = (rawList: any[] | null | undefined): MenuItem[] => (rawList || []).map((i: any) => {
+            const comboOption = (i.options || []).find((o: any) => o.name === '__combination_prices');
+            return {
+                ...i,
+                combination_prices: i.combination_prices || comboOption?.prices || null,
+                options: (i.options || []).filter((o: any) => o.name !== '__combination_prices')
+            };
+        });
+
+        const processRecipes = (rawList: any[] | null | undefined): Recipe[] => (rawList || []).map((r: any) => {
+            const dec = decodeRecipeVariation(r);
+            return {
+                parent_item_id: r.parent_item_id,
+                child_item_id: r.child_item_id,
+                quantity: r.quantity,
+                type_name: dec.type_name,
+                size_name: dec.size_name
+            };
+        });
+
         try {
-            const { data: catData } = await supabase.from('categories').select('*').eq('type', 'menu').order('display_order');
+            const { data: catData, error: catErr } = await supabase.from('categories').select('*').eq('type', 'menu').order('display_order');
+            if (catErr && isNetworkError(catErr)) throw catErr;
+
             const { data: linkData } = await supabase.from('item_categories').select('*');
             const { data: itemData } = await supabase.from('items').select('id,name,type,base_price,track_inventory,stock_level,station_id,image_url,tags,options').in('type', ['product', 'combo']).order('name');
             const { data: ingredientData } = await supabase.from('items').select('id,name,type,base_price,track_inventory,stock_level,station_id,image_url,tags,options').eq('type', 'ingredient').order('name');
@@ -1011,24 +1401,14 @@ export const usePosStore = create<PosStore>()(
             const { data: promos } = await supabase.from('promotions').select('*').eq('active', true).order('priority', { ascending: false });
             const { data: targets } = await supabase.from('promotion_targets').select('*');
 
-            const processItems = (rawList: any[] | null | undefined): MenuItem[] => (rawList || []).map((i: any) => {
-                const comboOption = (i.options || []).find((o: any) => o.name === '__combination_prices');
-                return {
-                    ...i,
-                    combination_prices: i.combination_prices || comboOption?.prices || null,
-                    options: (i.options || []).filter((o: any) => o.name !== '__combination_prices')
-                };
-            });
-
-            const processedRecipes: Recipe[] = (recipeData || []).map((r: any) => {
-                const dec = decodeRecipeVariation(r);
-                return {
-                    parent_item_id: r.parent_item_id,
-                    child_item_id: r.child_item_id,
-                    quantity: r.quantity,
-                    type_name: dec.type_name,
-                    size_name: dec.size_name
-                };
+            await saveLocalCache(tenantId, 'menu_catalog', {
+                catData: catData || [],
+                linkData: linkData || [],
+                itemData: itemData || [],
+                ingredientData: ingredientData || [],
+                recipeData: recipeData || [],
+                promos: promos || [],
+                targets: targets || [],
             });
 
             set({
@@ -1036,17 +1416,42 @@ export const usePosStore = create<PosStore>()(
                 itemCategoryLinks: linkData || [],
                 items: processItems(itemData),
                 allIngredients: processItems(ingredientData),
-                recipes: processedRecipes,
+                recipes: processRecipes(recipeData),
                 availablePromotions: promos || [],
                 promotionTargets: targets || [],
+                isOnline: true,
                 isLoading: false
             });
 
             // Trigger discount calculations for items currently in the cart
             get().recalculateCartMath();
         } catch (e) {
-            console.error(e);
-            set({ isLoading: false });
+            console.warn('[fetchMenu] Offline fallback activated:', e);
+            set({ isOnline: false });
+            const cached = await loadLocalCache<{
+                catData: any[];
+                linkData: any[];
+                itemData: any[];
+                ingredientData: any[];
+                recipeData: any[];
+                promos: any[];
+                targets: any[];
+            }>(tenantId, 'menu_catalog');
+            if (cached) {
+                set({
+                    categories: cached.catData || [],
+                    itemCategoryLinks: cached.linkData || [],
+                    items: processItems(cached.itemData),
+                    allIngredients: processItems(cached.ingredientData),
+                    recipes: processRecipes(cached.recipeData),
+                    availablePromotions: cached.promos || [],
+                    promotionTargets: cached.targets || [],
+                    isLoading: false
+                });
+                get().recalculateCartMath();
+            } else {
+                set({ isLoading: false });
+            }
         }
     },
 
@@ -1077,6 +1482,7 @@ export const usePosStore = create<PosStore>()(
 
     fetchOrders: async () => {
         set({ isLoadingOrders: true });
+        const tenantId = get().tenantId;
         try {
             const { data: ordersData, error } = await supabase
                 .from('orders')
@@ -1085,6 +1491,7 @@ export const usePosStore = create<PosStore>()(
                 .limit(100);
 
             if (error) {
+                if (isNetworkError(error)) throw error;
                 console.error('[fetchOrders] orders query error:', error);
                 set({ isLoadingOrders: false });
                 return;
@@ -1099,10 +1506,21 @@ export const usePosStore = create<PosStore>()(
                 return { ...order, table_name: table?.name || null };
             });
 
-            set({ ordersList: enriched, isLoadingOrders: false });
+            if (enriched.length > 0) {
+                await syncLocalOrderSequence(tenantId, enriched[0]?.order_number);
+            }
+            await saveLocalCache(tenantId, 'orders_list', enriched);
+
+            set({ ordersList: enriched, isOnline: true, isLoadingOrders: false });
         } catch (e) {
-            console.error('[fetchOrders] unexpected error:', e);
-            set({ isLoadingOrders: false });
+            console.warn('[fetchOrders] Offline fallback activated:', e);
+            set({ isOnline: false });
+            const cachedOrders = await loadLocalCache<Order[]>(tenantId, 'orders_list');
+            if (cachedOrders && cachedOrders.length > 0 && get().ordersList.length === 0) {
+                set({ ordersList: cachedOrders, isLoadingOrders: false });
+            } else {
+                set({ isLoadingOrders: false });
+            }
         }
     },
 
@@ -1253,7 +1671,8 @@ export const usePosStore = create<PosStore>()(
             inspectingSubItemId: null
         }));
 
-        await get().saveOrder();
+        get().recalculateCartMath();
+        get().debouncedSaveOrder();
 
         // REAL-TIME: Deduct inventory immediately
         await deductInventoryForCartItem(newCartItem, qtyToAdd, get, set);
@@ -1269,7 +1688,7 @@ export const usePosStore = create<PosStore>()(
             inspectingSubItemId: state.inspectingCartItemId === cart_id ? null : state.inspectingSubItemId
         }));
         // Cancel any pending KDS tickets for this item
-        if (item && (item.sentQuantity ?? 0) > 0 && activeOrderId) {
+        if (item && (item.sentQuantity ?? 0) > 0 && activeOrderId && get().isOnline !== false) {
             await get().cancelKitchenTicketsForItem(item.item.name);
         }
 
@@ -1278,7 +1697,8 @@ export const usePosStore = create<PosStore>()(
             await refundInventoryForCartItem(item, item.quantity, get, set);
         }
 
-        await get().saveOrder();
+        get().recalculateCartMath();
+        get().debouncedSaveOrder();
     },
 
     cancelKitchenTicketsForItem: async (itemName: string) => {
@@ -1373,17 +1793,18 @@ export const usePosStore = create<PosStore>()(
                 return ci;
             })
         }));
-        get().saveOrder();
+        get().recalculateCartMath();
+        get().debouncedSaveOrder();
 
         // REAL-TIME: if was NOT removed and now IS removed → refund stock
         // if was removed and now is NOT removed → deduct stock
         if (ing) {
             if (wasRemoved) {
                 // Un-removing → deduct again
-                await adjustSingleIngredientStock(ingredient_id, qty, 1, set);
+                await adjustSingleIngredientStock(ingredient_id, qty, 1, set, get);
             } else {
                 // Removing → refund
-                await adjustSingleIngredientStock(ingredient_id, qty, -1, set);
+                await adjustSingleIngredientStock(ingredient_id, qty, -1, set, get);
             }
         }
     },
@@ -1432,10 +1853,11 @@ export const usePosStore = create<PosStore>()(
                 return ci;
             })
         }));
-        get().saveOrder();
+        get().recalculateCartMath();
+        get().debouncedSaveOrder();
 
         // REAL-TIME: Deduct 1 unit of the extra ingredient
-        await adjustSingleIngredientStock(ingredient.id, cartItem?.quantity ?? 1, 1, set);
+        await adjustSingleIngredientStock(ingredient.id, cartItem?.quantity ?? 1, 1, set, get);
     },
 
     removeExtraIngredient: async (cart_id, ingredient_id, sub_cart_id) => {
@@ -1472,10 +1894,11 @@ export const usePosStore = create<PosStore>()(
                 return ci;
             })
         }));
-        get().saveOrder();
+        get().recalculateCartMath();
+        get().debouncedSaveOrder();
 
         // REAL-TIME: Refund 1 unit of the extra ingredient
-        await adjustSingleIngredientStock(ingredient_id, cartItem?.quantity ?? 1, -1, set);
+        await adjustSingleIngredientStock(ingredient_id, cartItem?.quantity ?? 1, -1, set, get);
     },
 
     updateCartItemOptions: async (cart_id, options, sub_cart_id) => {
@@ -1578,7 +2001,7 @@ export const usePosStore = create<PosStore>()(
 
         await refundInventoryForCartItem(oldCi, oldCi.quantity, get, set);
         await deductInventoryForCartItem(newCi, newCi.quantity, get, set);
-        await get().saveOrder();
+        get().debouncedSaveOrder();
 
         return { success: true };
     },
@@ -1599,7 +2022,8 @@ export const usePosStore = create<PosStore>()(
                 c.cart_id === cart_id ? { ...c, quantity: c.quantity + 1 } : c
             )
         }));
-        await get().saveOrder();
+        get().recalculateCartMath();
+        get().debouncedSaveOrder();
 
         // REAL-TIME: Deduct 1 more unit worth of ingredients
         await deductInventoryForCartItem(cartItem, 1, get, set);
@@ -1608,7 +2032,6 @@ export const usePosStore = create<PosStore>()(
 
     decrementCartItemQuantity: async (cart_id) => {
         const cartItem = get().cart.find((c: CartItem) => c.cart_id === cart_id);
-        const willRemove = cartItem && cartItem.quantity <= 1;
 
         set(state => ({
             cart: state.cart
@@ -1620,7 +2043,8 @@ export const usePosStore = create<PosStore>()(
                 (c: CartItem) => c.cart_id === cart_id && c.quantity <= 1
             ) ? null : state.inspectingCartItemId,
         }));
-        get().saveOrder();
+        get().recalculateCartMath();
+        get().debouncedSaveOrder();
 
         // REAL-TIME: Refund 1 unit worth of ingredients
         if (cartItem) {
@@ -1629,7 +2053,17 @@ export const usePosStore = create<PosStore>()(
     },
 
     sendToKitchen: async () => {
-        const { cart, activeOrderId, activeOrderType, activeOrderTable, activeOrderNumber } = get();
+        const {
+            cart,
+            activeOrderId,
+            activeOrderType,
+            activeOrderTable,
+            activeOrderNumber,
+            tenantId,
+            items: memoryItems,
+            kitchenStations: memoryStations,
+            expediterSettings,
+        } = get();
         // Items with unsent delta: quantity > sentQuantity (or sentQuantity undefined)
         const itemsWithDelta = cart.filter((c: CartItem) => {
             const sent = c.sentQuantity ?? 0;
@@ -1637,48 +2071,103 @@ export const usePosStore = create<PosStore>()(
         });
         if (!activeOrderId || itemsWithDelta.length === 0) return;
 
-        // Fetch settings for Expediter printer
-        const { data: settings } = await supabase.from('restaurant_settings')
-            .select('expediter_output_mode, expediter_printer_id').single();
+        // Flush any pending cart state before sending to kitchen
+        await get().saveOrder();
 
-        // Fetch station assignments
-        const itemIds = itemsWithDelta.map((c: CartItem) => c.item.id);
-        const { data: itemsWithStation } = await supabase
-            .from('items')
-            .select('id, name, station_id')
-            .in('id', itemIds);
+        // Resolve Expediter printer settings from cached state (or Supabase fallback if online)
+        let settings: any = expediterSettings;
+        if (
+            get().isOnline !== false &&
+            !settings?.expediter_output_mode &&
+            !settings?.expediter_printer_id
+        ) {
+            try {
+                const { data } = await supabase
+                    .from('restaurant_settings')
+                    .select('expediter_output_mode, expediter_printer_id')
+                    .single();
+                if (data) settings = data;
+            } catch {
+                // Use cached expediterSettings
+            }
+        }
 
-        // Group by station, carrying the unsent delta
+        // Group by station using cached memoryItems first so zero network wait is needed
         const stationGroups: Record<string, { stationId: string | null; items: { cartItem: CartItem; delta: number }[] }> = {};
         for (const cartItem of itemsWithDelta as CartItem[]) {
-            const meta = itemsWithStation?.find((i: any) => i.id === cartItem.item.id);
-            const key = meta?.station_id || 'none';
-            if (!stationGroups[key]) stationGroups[key] = { stationId: meta?.station_id || null, items: [] };
+            const meta = memoryItems.find((i: any) => i.id === cartItem.item.id) || cartItem.item;
+            const key = (meta as any)?.station_id || 'none';
+            if (!stationGroups[key]) stationGroups[key] = { stationId: (meta as any)?.station_id || null, items: [] };
             const delta = cartItem.quantity - (cartItem.sentQuantity ?? 0);
             stationGroups[key].items.push({ cartItem, delta });
         }
 
-        // Fetch station names AND Printer config
+        // Resolve station rows from cached kitchenStations (with online fallback)
+        let stationRows: any[] = memoryStations || [];
         const uniqueIds = Object.values(stationGroups).map(g => g.stationId).filter(Boolean) as string[];
-        const { data: stationRows } = uniqueIds.length > 0
-            ? await supabase.from('kitchen_stations').select('id, name, color, output_mode, printer_id').in('id', uniqueIds)
-            : { data: [] };
-
-        // Get current order number if missing
-        let displayOrderNumber = activeOrderNumber;
-        if (!displayOrderNumber) {
-            const { data: orderRow } = await supabase.from('orders').select('order_number').eq('id', activeOrderId).single();
-            displayOrderNumber = orderRow?.order_number;
+        if (uniqueIds.length > 0 && stationRows.length === 0 && get().isOnline !== false) {
+            try {
+                const { data } = await supabase
+                    .from('kitchen_stations')
+                    .select('id, name, color, output_mode, printer_id')
+                    .in('id', uniqueIds);
+                if (data) stationRows = data;
+            } catch {
+                // Keep empty
+            }
         }
 
-        // Generate a valid UUID v4 for the batch_id
-        const batchId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-            const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
-        });
+        const displayOrderNumber = activeOrderNumber || activeOrderId.slice(0, 6).toUpperCase();
+        const batchId = generateUUID();
+
+        const persistOrEnqueueTicket = async (ticketRow: Record<string, any>, ticketItemRows: Array<Record<string, any>>) => {
+            if (get().isOnline === false) {
+                const count = await enqueueOfflineMutation(tenantId, {
+                    type: 'CREATE_KITCHEN_TICKET',
+                    ticket: ticketRow,
+                    ticketItems: ticketItemRows,
+                });
+                set({ pendingSyncCount: count });
+                return;
+            }
+            try {
+                const { error: tErr } = await supabase.from('kitchen_tickets').insert([ticketRow]);
+                if (tErr && isNetworkError(tErr)) {
+                    const count = await enqueueOfflineMutation(tenantId, {
+                        type: 'CREATE_KITCHEN_TICKET',
+                        ticket: ticketRow,
+                        ticketItems: ticketItemRows,
+                    });
+                    set({ isOnline: false, pendingSyncCount: count });
+                    return;
+                }
+                if (!tErr && ticketItemRows.length > 0) {
+                    const { error: tiErr } = await supabase.from('kitchen_ticket_items').insert(ticketItemRows);
+                    if (tiErr && isNetworkError(tiErr)) {
+                        const count = await enqueueOfflineMutation(tenantId, {
+                            type: 'CREATE_KITCHEN_TICKET',
+                            ticket: ticketRow,
+                            ticketItems: ticketItemRows,
+                        });
+                        set({ isOnline: false, pendingSyncCount: count });
+                    }
+                }
+            } catch (err) {
+                if (isNetworkError(err)) {
+                    const count = await enqueueOfflineMutation(tenantId, {
+                        type: 'CREATE_KITCHEN_TICKET',
+                        ticket: ticketRow,
+                        ticketItems: ticketItemRows,
+                    });
+                    set({ isOnline: false, pendingSyncCount: count });
+                }
+            }
+        };
 
         // 1. Create the Master Expediter Ticket containing ALL items from this send
-        const { data: expediterTicket } = await supabase.from('kitchen_tickets').insert([{
+        const expediterTicketId = generateUUID();
+        const expediterTicketRow = {
+            id: expediterTicketId,
             order_id: activeOrderId,
             order_number: displayOrderNumber || null,
             station_id: null,
@@ -1687,27 +2176,31 @@ export const usePosStore = create<PosStore>()(
             type: activeOrderType,
             table_name: activeOrderTable?.name || null,
             is_expediter: true,
-            batch_id: batchId
-        }]).select().single();
+            batch_id: batchId,
+        };
+        const expediterTicketItems = itemsWithDelta.map((cartItem) => {
+            const delta = cartItem.quantity - (cartItem.sentQuantity ?? 0);
+            const mods = {
+                ingredients: cartItem.ingredients?.map((i: any) => ({ name: i.name, removed: i.removed || false, extra: i.extra || false })) || [],
+                selectedOptions: cartItem.selectedOptions || {}
+            };
+            return {
+                id: generateUUID(),
+                ticket_id: expediterTicketId,
+                item_name: cartItem.item.name,
+                quantity: delta,
+                modifications: mods,
+                status: 'pending',
+            };
+        });
+        await persistOrEnqueueTicket(expediterTicketRow, expediterTicketItems);
 
-        if (expediterTicket) {
-            const allTicketItems = itemsWithDelta.map((cartItem) => {
-                const delta = cartItem.quantity - (cartItem.sentQuantity ?? 0);
-                const mods = {
-                    ingredients: cartItem.ingredients?.map((i: any) => ({ name: i.name, removed: i.removed || false, extra: i.extra || false })) || [],
-                    selectedOptions: cartItem.selectedOptions || {}
-                };
-                return { ticket_id: expediterTicket.id, item_name: cartItem.item.name, quantity: delta, modifications: mods, status: 'pending' };
-            });
-            if (allTicketItems.length > 0) {
-                await supabase.from('kitchen_ticket_items').insert(allTicketItems);
-            }
-        }
-
-        // 2. Create the Station-specific tickets
+        // 2. Create the Station-specific tickets + fire LAN TCP:9100 printing immediately
         for (const [, group] of Object.entries(stationGroups)) {
             const station = stationRows?.find((s: any) => s.id === group.stationId);
-            const { data: ticket } = await supabase.from('kitchen_tickets').insert([{
+            const stationTicketId = generateUUID();
+            const stationTicketRow = {
+                id: stationTicketId,
                 order_id: activeOrderId,
                 order_number: displayOrderNumber || null,
                 station_id: group.stationId,
@@ -1716,46 +2209,48 @@ export const usePosStore = create<PosStore>()(
                 type: activeOrderType,
                 table_name: activeOrderTable?.name || null,
                 is_expediter: false,
-                batch_id: batchId
-            }]).select().single();
+                batch_id: batchId,
+            };
+            const ticketRows = group.items.map(({ cartItem, delta }) => {
+                const mods = {
+                    ingredients: cartItem.ingredients?.map((i: any) => ({ name: i.name, removed: i.removed || false, extra: i.extra || false })) || [],
+                    selectedOptions: cartItem.selectedOptions || {}
+                };
+                return {
+                    id: generateUUID(),
+                    ticket_id: stationTicketId,
+                    item_name: cartItem.item.name,
+                    quantity: delta,
+                    modifications: mods,
+                    status: 'pending',
+                };
+            });
 
-            if (ticket) {
-                const ticketRows = group.items.map(({ cartItem, delta }) => {
-                    const mods = {
-                        ingredients: cartItem.ingredients?.map((i: any) => ({ name: i.name, removed: i.removed || false, extra: i.extra || false })) || [],
-                        selectedOptions: cartItem.selectedOptions || {}
-                    };
-                    return { ticket_id: ticket.id, item_name: cartItem.item.name, quantity: delta, modifications: mods, status: 'pending' };
-                });
-
-                if (ticketRows.length > 0) {
-                    await supabase.from('kitchen_ticket_items').insert(ticketRows);
-
-                    // TCP PRINTING FOR STATION
-                    const stationPrinter = station ? get().printers.find((p: any) => p.id === station.printer_id) : null;
-                    if (station && (station.output_mode === 'printer' || station.output_mode === 'both') && stationPrinter) {
-                        try {
-                            const buffer = buildReceiptBuffer({
-                                printerIp: stationPrinter.ip_address,
-                                printerPort: stationPrinter.port || 9100,
-                                orderNumber: String(displayOrderNumber || ''),
-                                orderType: activeOrderType,
-                                tableName: activeOrderTable?.name || '',
-                                items: group.items.map(m => ({
-                                    name: m.cartItem.item.name,
-                                    quantity: m.delta,
-                                    selectedOptions: m.cartItem.selectedOptions,
-                                    ingredients: m.cartItem.ingredients
-                                })),
-                                stationName: station.name
-                            });
-                            printToNetwork(stationPrinter.ip_address, stationPrinter.port || 9100, buffer).catch((e: any) => console.error("TCP Print Error (Station):", e));
-                        } catch (e: any) {
-                            console.error("Failed to build receipt buffer", e);
-                        }
-                    }
+            // TCP PRINTING FOR STATION (works over local Wi-Fi even when internet is offline!)
+            const stationPrinter = station ? get().printers.find((p: any) => p.id === station.printer_id) : null;
+            if (ticketRows.length > 0 && station && (station.output_mode === 'printer' || station.output_mode === 'both') && stationPrinter) {
+                try {
+                    const buffer = buildReceiptBuffer({
+                        printerIp: stationPrinter.ip_address,
+                        printerPort: stationPrinter.port || 9100,
+                        orderNumber: String(displayOrderNumber || ''),
+                        orderType: activeOrderType,
+                        tableName: activeOrderTable?.name || '',
+                        items: group.items.map(m => ({
+                            name: m.cartItem.item.name,
+                            quantity: m.delta,
+                            selectedOptions: m.cartItem.selectedOptions,
+                            ingredients: m.cartItem.ingredients
+                        })),
+                        stationName: station.name
+                    });
+                    printToNetwork(stationPrinter.ip_address, stationPrinter.port || 9100, buffer).catch((e: any) => console.error("TCP Print Error (Station):", e));
+                } catch (e: any) {
+                    console.error("Failed to build receipt buffer", e);
                 }
             }
+
+            await persistOrEnqueueTicket(stationTicketRow, ticketRows);
         }
 
         // TCP PRINTING FOR EXPEDITER (Master Ticket of sent items)
@@ -1790,14 +2285,24 @@ export const usePosStore = create<PosStore>()(
             )
         }));
 
-        // Instantly save to DB so "sent" status isn't lost if the user leaves the order immediately
+        // Instantly save to DB/Queue so "sent" status isn't lost if the user leaves the order immediately
         await get().saveOrder();
     },
 
     checkout: async (payments) => {
         set({ isLoading: true });
         try {
-            const { cart, activeOrderId, activeOrderTable } = get();
+            const {
+                cart,
+                activeOrderId,
+                activeOrderTable,
+                activeOrderNumber,
+                activeOrderType,
+                tenantId,
+                items: memoryItems,
+                kitchenStations: memoryStations,
+                expediterSettings,
+            } = get();
 
             if (!activeOrderId) {
                 console.error('No active order to checkout');
@@ -1805,156 +2310,242 @@ export const usePosStore = create<PosStore>()(
                 return null;
             }
 
-            // Force a final sync of the cart to the database before marking paid
+            // Force a final sync of the cart to the database / local cache before marking paid
             await get().saveOrder();
 
-            // 1. Update the existing open order to 'paid'
-            // NOTE: We don't need to update total_amount here because saveOrder() already calculated
-            // and saved the exact total_neto including IVA and discounts.
-            const { data: orderData, error: orderError } = await supabase
-                .from('orders')
-                .update({ status: 'paid' })
-                .eq('id', activeOrderId)
-                .select()
-                .single();
+            const cachedOrder = get().ordersList.find((o: any) => o.id === activeOrderId);
+            const finalOrderNumber = String(
+                cachedOrder?.order_number || activeOrderNumber || activeOrderId.slice(0, 6).toUpperCase()
+            );
+            const totalAmount = Number(cachedOrder?.total_amount ?? 0);
+            const taxAmount = Number(cachedOrder?.monto_iva ?? 0);
 
-            if (orderError) throw orderError;
-            const orderId = orderData.id;
+            const activeShift = get().activeCashShift;
+            const paymentRecords = (payments || []).map(p => ({
+                id: generateUUID(),
+                order_id: activeOrderId,
+                amount: p.amount,
+                method: p.method,
+                reference_id: p.reference_id || null,
+                status: 'completed',
+                cash_shift_id: p.method === 'cash' ? (activeShift?.id || null) : null
+            }));
 
-            // 1.5 Record the payments
-            if (payments && payments.length > 0) {
-                const activeShift = get().activeCashShift;
-                const paymentRecords = payments.map(p => ({
-                    order_id: activeOrderId,
-                    amount: p.amount,
-                    method: p.method,
-                    reference_id: p.reference_id || null,
-                    status: 'completed',
-                    cash_shift_id: p.method === 'cash' ? (activeShift?.id || null) : null
-                }));
-                const { error: paymentError } = await supabase.from('payments').insert(paymentRecords);
-                if (paymentError) console.error("Payment recording error:", paymentError);
+            let workedOnline = false;
+            if (get().isOnline !== false) {
+                try {
+                    const { data: orderData, error: orderError } = await supabase
+                        .from('orders')
+                        .update({ status: 'paid' })
+                        .eq('id', activeOrderId)
+                        .select()
+                        .single();
+
+                    if (!orderError && orderData) {
+                        workedOnline = true;
+                        if (paymentRecords.length > 0) {
+                            const { error: paymentError } = await supabase.from('payments').insert(paymentRecords);
+                            if (paymentError) console.error("Payment recording error:", paymentError);
+                        }
+                    } else if (orderError && !isNetworkError(orderError)) {
+                        throw orderError;
+                    }
+                } catch (err) {
+                    if (!isNetworkError(err)) {
+                        throw err;
+                    }
+                    workedOnline = false;
+                }
             }
 
-            // NOTE: Inventory deduction is no longer done at checkout.
-            // Stock is deducted in real-time when items are added to the cart.
+            if (!workedOnline) {
+                const count = await enqueueOfflineMutation(tenantId, {
+                    type: 'COMPLETE_CHECKOUT',
+                    orderId: activeOrderId,
+                    orderSnapshot: cachedOrder
+                        ? {
+                              id: cachedOrder.id,
+                              type: cachedOrder.type,
+                              table_id: cachedOrder.table_id,
+                              customer_name: cachedOrder.customer_name,
+                              status: 'paid',
+                              total_amount: totalAmount,
+                              subtotal_bruto: cachedOrder.subtotal_bruto,
+                              total_descuentos: cachedOrder.total_descuentos,
+                              base_imponible_iva: cachedOrder.base_imponible_iva,
+                              monto_iva: taxAmount,
+                              total_neto: totalAmount,
+                              user_id: cachedOrder.user_id,
+                              tenant_id: tenantId,
+                          }
+                        : undefined,
+                    lineItemsSnapshot: (cachedOrder as any)?.order_line_items || [],
+                    totalAmount,
+                    taxAmount,
+                    tableId: activeOrderTable?.id || null,
+                    payments: paymentRecords,
+                });
+                set({ isOnline: false, pendingSyncCount: count });
+            }
 
-            // 5. Create Kitchen Tickets for any UNSENT items (items already sent via sendToKitchen are skipped)
+            // 5. Create Kitchen Tickets & Print over LAN for any UNSENT items
             {
                 const unsentCart = cart.filter((c: CartItem) => (c.sentQuantity ?? 0) < c.quantity);
                 if (unsentCart.length > 0) {
-
-                    // Fetch settings for Expediter printer
-                    const { data: settings } = await supabase.from('restaurant_settings')
-                        .select('expediter_output_mode, expediter_printer_id').single();
-
-                    const itemIds = unsentCart.map((c: CartItem) => c.item.id);
-                    const { data: itemsWithStation } = await supabase
-                        .from('items')
-                        .select('id, name, station_id')
-                        .in('id', itemIds);
+                    let settings: any = expediterSettings;
+                    if (
+                        workedOnline &&
+                        !settings?.expediter_output_mode &&
+                        !settings?.expediter_printer_id
+                    ) {
+                        try {
+                            const { data } = await supabase
+                                .from('restaurant_settings')
+                                .select('expediter_output_mode, expediter_printer_id')
+                                .single();
+                            if (data) settings = data;
+                        } catch {
+                            // Use cached
+                        }
+                    }
 
                     const stationGroups: Record<string, { stationId: string | null; items: CartItem[] }> = {};
                     for (const cartItem of unsentCart as CartItem[]) {
-                        const itemMeta = itemsWithStation?.find(i => i.id === cartItem.item.id);
-                        const stationKey = itemMeta?.station_id || 'none';
+                        const itemMeta = memoryItems.find(i => i.id === cartItem.item.id) || cartItem.item;
+                        const stationKey = (itemMeta as any)?.station_id || 'none';
                         if (!stationGroups[stationKey]) {
-                            stationGroups[stationKey] = { stationId: itemMeta?.station_id || null, items: [] };
+                            stationGroups[stationKey] = { stationId: (itemMeta as any)?.station_id || null, items: [] };
                         }
                         stationGroups[stationKey].items.push(cartItem);
                     }
 
+                    let stationRows: any[] = memoryStations || [];
                     const uniqueStationIds = Object.values(stationGroups).map(g => g.stationId).filter(Boolean) as string[];
-                    const { data: stationRows } = uniqueStationIds.length > 0
-                        ? await supabase.from('kitchen_stations').select('id, name, color, output_mode, printer_id').in('id', uniqueStationIds)
-                        : { data: [] };
+                    if (uniqueStationIds.length > 0 && stationRows.length === 0 && workedOnline) {
+                        try {
+                            const { data } = await supabase
+                                .from('kitchen_stations')
+                                .select('id, name, color, output_mode, printer_id')
+                                .in('id', uniqueStationIds);
+                            if (data) stationRows = data;
+                        } catch {
+                            // Keep empty
+                        }
+                    }
 
-                    const orderState = get();
-
-                    const batchId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-                        const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-                        return v.toString(16);
-                    });
+                    const batchId = generateUUID();
+                    const persistTicket = async (tRow: Record<string, any>, tItems: Array<Record<string, any>>) => {
+                        if (!workedOnline) {
+                            const count = await enqueueOfflineMutation(tenantId, {
+                                type: 'CREATE_KITCHEN_TICKET',
+                                ticket: tRow,
+                                ticketItems: tItems,
+                            });
+                            set({ pendingSyncCount: count });
+                            return;
+                        }
+                        try {
+                            await supabase.from('kitchen_tickets').insert([tRow]);
+                            if (tItems.length > 0) {
+                                await supabase.from('kitchen_ticket_items').insert(tItems);
+                            }
+                        } catch {
+                            const count = await enqueueOfflineMutation(tenantId, {
+                                type: 'CREATE_KITCHEN_TICKET',
+                                ticket: tRow,
+                                ticketItems: tItems,
+                            });
+                            set({ pendingSyncCount: count });
+                        }
+                    };
 
                     // 1. Expediter ticket
-                    const { data: expediterTicket } = await supabase.from('kitchen_tickets').insert([{
-                        order_id: orderState.activeOrderId,
-                        order_number: orderData.order_number,
+                    const expTicketId = generateUUID();
+                    const expTicketRow = {
+                        id: expTicketId,
+                        order_id: activeOrderId,
+                        order_number: finalOrderNumber,
                         station_id: null,
                         station_name: 'Expediter View',
                         status: 'pending',
-                        type: orderState.activeOrderType,
-                        table_name: orderState.activeOrderTable?.name || null,
+                        type: activeOrderType,
+                        table_name: activeOrderTable?.name || null,
                         batch_id: batchId,
-                        is_expediter: true
-                    }]).select().single();
+                        is_expediter: true,
+                    };
+                    const allTicketItems = unsentCart.map((cartItem) => {
+                        const mods = {
+                            ingredients: cartItem.ingredients?.map((i: any) => ({ name: i.name, removed: i.removed || false, extra: i.extra || false })) || [],
+                            selectedOptions: cartItem.selectedOptions || {}
+                        };
+                        return {
+                            id: generateUUID(),
+                            ticket_id: expTicketId,
+                            item_name: cartItem.item.name,
+                            quantity: cartItem.quantity - (cartItem.sentQuantity || 0),
+                            modifications: mods,
+                            status: 'pending',
+                        };
+                    });
+                    await persistTicket(expTicketRow, allTicketItems);
 
-                    if (expediterTicket) {
-                        const allTicketItems = unsentCart.map((cartItem) => {
+                    // 2. Station tickets + LAN TCP printing
+                    for (const [, group] of Object.entries(stationGroups)) {
+                        const station = stationRows?.find((s: any) => s.id === group.stationId);
+                        const stTicketId = generateUUID();
+                        const stTicketRow = {
+                            id: stTicketId,
+                            order_id: activeOrderId,
+                            order_number: finalOrderNumber,
+                            station_id: group.stationId,
+                            station_name: station?.name || null,
+                            status: group.stationId ? 'pending' : 'done',
+                            type: activeOrderType,
+                            table_name: activeOrderTable?.name || null,
+                            batch_id: batchId,
+                            is_expediter: false,
+                        };
+                        const ticketItems = group.items.map((cartItem: CartItem) => {
+                            const delta = cartItem.quantity - (cartItem.sentQuantity || 0);
                             const mods = {
                                 ingredients: cartItem.ingredients?.map((i: any) => ({ name: i.name, removed: i.removed || false, extra: i.extra || false })) || [],
                                 selectedOptions: cartItem.selectedOptions || {}
                             };
-                            return { ticket_id: expediterTicket.id, item_name: cartItem.item.name, quantity: cartItem.quantity - (cartItem.sentQuantity || 0), modifications: mods, status: 'pending' };
+                            return {
+                                id: generateUUID(),
+                                ticket_id: stTicketId,
+                                item_name: cartItem.item.name,
+                                quantity: delta,
+                                modifications: mods,
+                                status: 'pending',
+                            };
                         });
-                        if (allTicketItems.length > 0) {
-                            await supabase.from('kitchen_ticket_items').insert(allTicketItems);
-                        }
-                    }
 
-                    // 2. Station tickets
-                    for (const [, group] of Object.entries(stationGroups)) {
-                        const station = stationRows?.find(s => s.id === group.stationId);
-                        const { data: ticket } = await supabase.from('kitchen_tickets').insert([{
-                            order_id: orderState.activeOrderId,
-                            order_number: orderData.order_number,
-                            station_id: group.stationId,
-                            station_name: station?.name || null,
-                            status: group.stationId ? 'pending' : 'done',
-                            type: orderState.activeOrderType,
-                            table_name: orderState.activeOrderTable?.name || null,
-                            batch_id: batchId,
-                            is_expediter: false
-                        }]).select().single();
-
-                        if (ticket) {
-                            const ticketItems = group.items.flatMap((cartItem: CartItem) => {
-                                const delta = cartItem.quantity - (cartItem.sentQuantity || 0);
-                                const mods = {
-                                    ingredients: cartItem.ingredients?.map((i: any) => ({ name: i.name, removed: i.removed || false, extra: i.extra || false })) || [],
-                                    selectedOptions: cartItem.selectedOptions || {}
-                                };
-                                return [{ ticket_id: ticket.id, item_name: cartItem.item.name, quantity: delta, modifications: mods, status: 'pending' }];
-                            });
-
-                            if (ticketItems.length > 0) {
-                                await supabase.from('kitchen_ticket_items').insert(ticketItems);
-
-                                // TCP PRINTING FOR STATION
-                                const stationPrinter = station ? get().printers.find((p: any) => p.id === station.printer_id) : null;
-                                if (station && (station.output_mode === 'printer' || station.output_mode === 'both') && stationPrinter) {
-                                    try {
-                                        const buffer = buildReceiptBuffer({
-                                            printerIp: stationPrinter.ip_address,
-                                            printerPort: stationPrinter.port || 9100,
-                                            orderNumber: String(orderData.order_number || ''),
-                                            orderType: orderState.activeOrderType,
-                                            tableName: orderState.activeOrderTable?.name || '',
-                                            items: group.items.map(m => ({
-                                                name: m.item.name,
-                                                quantity: m.quantity - (m.sentQuantity ?? 0),
-                                                selectedOptions: m.selectedOptions,
-                                                ingredients: m.ingredients
-                                            })),
-                                            stationName: station.name
-                                        });
-                                        printToNetwork(stationPrinter.ip_address, stationPrinter.port || 9100, buffer).catch((e: any) => console.error("TCP Print Error (Station):", e));
-                                    } catch (e: any) {
-                                        console.error("Failed to build receipt buffer", e);
-                                    }
-                                }
+                        // TCP PRINTING FOR STATION (works offline over LAN Wi-Fi)
+                        const stationPrinter = station ? get().printers.find((p: any) => p.id === station.printer_id) : null;
+                        if (ticketItems.length > 0 && station && (station.output_mode === 'printer' || station.output_mode === 'both') && stationPrinter) {
+                            try {
+                                const buffer = buildReceiptBuffer({
+                                    printerIp: stationPrinter.ip_address,
+                                    printerPort: stationPrinter.port || 9100,
+                                    orderNumber: finalOrderNumber,
+                                    orderType: activeOrderType,
+                                    tableName: activeOrderTable?.name || '',
+                                    items: group.items.map(m => ({
+                                        name: m.item.name,
+                                        quantity: m.quantity - (m.sentQuantity ?? 0),
+                                        selectedOptions: m.selectedOptions,
+                                        ingredients: m.ingredients
+                                    })),
+                                    stationName: station.name
+                                });
+                                printToNetwork(stationPrinter.ip_address, stationPrinter.port || 9100, buffer).catch((e: any) => console.error("TCP Print Error (Station):", e));
+                            } catch (e: any) {
+                                console.error("Failed to build receipt buffer", e);
                             }
                         }
+
+                        await persistTicket(stTicketRow, ticketItems);
                     }
 
                     // TCP PRINTING FOR EXPEDITER (Master Ticket of sent items)
@@ -1964,9 +2555,9 @@ export const usePosStore = create<PosStore>()(
                             const buffer = buildReceiptBuffer({
                                 printerIp: expPrinter.ip_address,
                                 printerPort: expPrinter.port || 9100,
-                                orderNumber: String(orderData.order_number || ''),
-                                orderType: orderState.activeOrderType,
-                                tableName: orderState.activeOrderTable?.name || '',
+                                orderNumber: finalOrderNumber,
+                                orderType: activeOrderType,
+                                tableName: activeOrderTable?.name || '',
                                 items: unsentCart.map(c => ({
                                     name: c.item.name,
                                     quantity: c.quantity - (c.sentQuantity ?? 0),
@@ -1985,20 +2576,33 @@ export const usePosStore = create<PosStore>()(
 
             // 6. Release table back to available if dine-in
             if (activeOrderTable?.id) {
-                await supabase.from('tables').update({ status: 'available' }).eq('id', activeOrderTable.id);
                 set(prev => ({ tables: prev.tables.map((t: any) => t.id === activeOrderTable.id ? { ...t, status: 'available' } : t) }));
+                if (workedOnline) {
+                    try {
+                        await supabase.from('tables').update({ status: 'available' }).eq('id', activeOrderTable.id);
+                    } catch {
+                        // Already handled if COMPLETE_CHECKOUT was queued
+                    }
+                }
             }
+
+            // Update local ordersList to mark order paid
+            const updatedOrdersList = get().ordersList.map((o: any) =>
+                o.id === activeOrderId
+                    ? { ...o, status: 'paid', payments: paymentRecords }
+                    : o
+            );
+            await saveLocalCache(tenantId, 'orders_list', updatedOrdersList);
 
             // 7. Clear Active Order ID *first* so any trailing saveOrder calls exit early
             const finishedOrderTable = activeOrderTable?.name || null;
-            const finishedOrderNumber = orderData.order_number;
-            set({ activeOrderId: null });
+            set({ activeOrderId: null, ordersList: updatedOrdersList });
 
             // 8. Clear Cart 
             set({ cart: [], inspectingCartItemId: null, inspectingSubItemId: null, isLoading: false, activeOrderTable: null, activeOrderCustomer: null, activeOrderNumber: null });
 
             return {
-                order_number: finishedOrderNumber,
+                order_number: finalOrderNumber,
                 table_name: finishedOrderTable
             };
         } catch (error) {
@@ -2009,6 +2613,7 @@ export const usePosStore = create<PosStore>()(
     },
     fetchActiveCashShift: async () => {
         const user = get().currentPosUser;
+        const tenantId = get().tenantId;
         if (!user) return;
         try {
             const { data, error } = await supabase
@@ -2020,20 +2625,53 @@ export const usePosStore = create<PosStore>()(
             if (error) throw error;
             if (data && data.length > 0) {
                 set({ activeCashShift: data[0] });
+                await saveLocalCache(tenantId, 'active_cash_shift', data[0]);
             } else {
                 set({ activeCashShift: null });
+                await saveLocalCache(tenantId, 'active_cash_shift', null);
             }
         } catch (e) {
-            console.error('Error fetching active cash shift:', e);
+            console.warn('Offline fallback for active cash shift:', e);
+            const cachedShift = await loadLocalCache<CashShift | null>(tenantId, 'active_cash_shift');
+            if (cachedShift && cachedShift.user_id === user.id && cachedShift.status === 'open') {
+                set({ activeCashShift: cachedShift });
+            }
         }
     },
     openCashShift: async (startingCash) => {
         const user = get().currentPosUser;
+        const tenantId = get().tenantId;
         if (!user) return false;
+        const shiftId = generateUUID();
+        const fallbackShift: any = {
+            id: shiftId,
+            user_id: user.id,
+            status: 'open',
+            starting_cash: startingCash,
+            expected_cash: startingCash,
+            opening_time: new Date().toISOString(),
+        };
         try {
+            if (get().isOnline === false) {
+                const count = await enqueueOfflineMutation(tenantId, {
+                    type: 'CASH_SHIFT_OP',
+                    op: 'open',
+                    payload: {
+                        id: shiftId,
+                        user_id: user.id,
+                        status: 'open',
+                        starting_cash: startingCash,
+                        expected_cash: startingCash,
+                    },
+                });
+                set({ activeCashShift: fallbackShift, pendingSyncCount: count });
+                await saveLocalCache(tenantId, 'active_cash_shift', fallbackShift);
+                return true;
+            }
             const { data, error } = await supabase
                 .from('cash_shifts')
                 .insert([{
+                    id: shiftId,
                     user_id: user.id,
                     status: 'open',
                     starting_cash: startingCash,
@@ -2041,19 +2679,53 @@ export const usePosStore = create<PosStore>()(
                 }])
                 .select()
                 .single();
-            if (error || !data) {
+            if (error) {
+                if (isNetworkError(error)) {
+                    const count = await enqueueOfflineMutation(tenantId, {
+                        type: 'CASH_SHIFT_OP',
+                        op: 'open',
+                        payload: {
+                            id: shiftId,
+                            user_id: user.id,
+                            status: 'open',
+                            starting_cash: startingCash,
+                            expected_cash: startingCash,
+                        },
+                    });
+                    set({ isOnline: false, activeCashShift: fallbackShift, pendingSyncCount: count });
+                    await saveLocalCache(tenantId, 'active_cash_shift', fallbackShift);
+                    return true;
+                }
                 console.error('Failed to open cash shift:', error);
                 return false;
             }
             set({ activeCashShift: data });
+            await saveLocalCache(tenantId, 'active_cash_shift', data);
             return true;
         } catch (e) {
+            if (isNetworkError(e)) {
+                const count = await enqueueOfflineMutation(tenantId, {
+                    type: 'CASH_SHIFT_OP',
+                    op: 'open',
+                    payload: {
+                        id: shiftId,
+                        user_id: user.id,
+                        status: 'open',
+                        starting_cash: startingCash,
+                        expected_cash: startingCash,
+                    },
+                });
+                set({ isOnline: false, activeCashShift: fallbackShift, pendingSyncCount: count });
+                await saveLocalCache(tenantId, 'active_cash_shift', fallbackShift);
+                return true;
+            }
             console.error('Error opening cash shift:', e);
             return false;
         }
     },
     closeCashShift: async (actualCash, notes) => {
         const activeShift = get().activeCashShift;
+        const tenantId = get().tenantId;
         if (!activeShift) return false;
         try {
             const summary = await get().fetchCashShiftSummary(activeShift.id);
@@ -2062,24 +2734,47 @@ export const usePosStore = create<PosStore>()(
                 Number(summary?.adjustmentsIn || 0) - 
                 Number(summary?.adjustmentsOut || 0);
             const difference = actualCash - expectedCash;
+            const closePayload = {
+                status: 'closed',
+                closing_time: new Date().toISOString(),
+                expected_cash: expectedCash,
+                actual_cash: actualCash,
+                difference: difference,
+                notes: notes || null
+            };
+
+            if (get().isOnline === false) {
+                const count = await enqueueOfflineMutation(tenantId, {
+                    type: 'CASH_SHIFT_OP',
+                    op: 'close',
+                    payload: { id: activeShift.id, ...closePayload },
+                });
+                set({ activeCashShift: null, pendingSyncCount: count });
+                await saveLocalCache(tenantId, 'active_cash_shift', null);
+                return true;
+            }
 
             const { error } = await supabase
                 .from('cash_shifts')
-                .update({
-                    status: 'closed',
-                    closing_time: new Date().toISOString(),
-                    expected_cash: expectedCash,
-                    actual_cash: actualCash,
-                    difference: difference,
-                    notes: notes || null
-                })
+                .update(closePayload)
                 .eq('id', activeShift.id);
 
             if (error) {
+                if (isNetworkError(error)) {
+                    const count = await enqueueOfflineMutation(tenantId, {
+                        type: 'CASH_SHIFT_OP',
+                        op: 'close',
+                        payload: { id: activeShift.id, ...closePayload },
+                    });
+                    set({ isOnline: false, activeCashShift: null, pendingSyncCount: count });
+                    await saveLocalCache(tenantId, 'active_cash_shift', null);
+                    return true;
+                }
                 console.error('Failed to close cash shift:', error);
                 return false;
             }
             set({ activeCashShift: null });
+            await saveLocalCache(tenantId, 'active_cash_shift', null);
             return true;
         } catch (e) {
             console.error('Error closing cash shift:', e);
@@ -2088,23 +2783,53 @@ export const usePosStore = create<PosStore>()(
     },
     addCashAdjustment: async (type, amount, reason) => {
         const activeShift = get().activeCashShift;
+        const tenantId = get().tenantId;
         if (!activeShift) return false;
+        const adjPayload = {
+            id: generateUUID(),
+            shift_id: activeShift.id,
+            type,
+            amount,
+            reason: reason || null
+        };
         try {
+            if (get().isOnline === false) {
+                const count = await enqueueOfflineMutation(tenantId, {
+                    type: 'CASH_SHIFT_OP',
+                    op: 'adjustment',
+                    payload: adjPayload,
+                });
+                set({ pendingSyncCount: count });
+                return true;
+            }
             const { error } = await supabase
                 .from('cash_adjustments')
-                .insert([{
-                    shift_id: activeShift.id,
-                    type,
-                    amount,
-                    reason: reason || null
-                }]);
+                .insert([adjPayload]);
             if (error) {
+                if (isNetworkError(error)) {
+                    const count = await enqueueOfflineMutation(tenantId, {
+                        type: 'CASH_SHIFT_OP',
+                        op: 'adjustment',
+                        payload: adjPayload,
+                    });
+                    set({ isOnline: false, pendingSyncCount: count });
+                    return true;
+                }
                 console.error('Failed to add cash adjustment:', error);
                 return false;
             }
             await get().fetchActiveCashShift();
             return true;
         } catch (e) {
+            if (isNetworkError(e)) {
+                const count = await enqueueOfflineMutation(tenantId, {
+                    type: 'CASH_SHIFT_OP',
+                    op: 'adjustment',
+                    payload: adjPayload,
+                });
+                set({ isOnline: false, pendingSyncCount: count });
+                return true;
+            }
             console.error('Error adding cash adjustment:', e);
             return false;
         }

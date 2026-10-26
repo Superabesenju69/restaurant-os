@@ -5,6 +5,7 @@ import { t } from '../utils/i18n';
 import TimeClockModal from '../components/TimeClockModal';
 import { supabase } from '../utils/supabase';
 import { useSafePadding } from '../utils/safeArea';
+import { loadLocalCache, saveLocalCache, isNetworkError } from '../services/offlineSyncService';
 
 interface Props {
     onLogin: (user: { id: string; full_name: string; role: string }) => void;
@@ -52,54 +53,90 @@ export default function PinLoginScreen({ onLogin }: Props) {
         setLoading(true);
         setError('');
         try {
-            // Check if tenant is active
-            if (tenantId) {
-                const { data: tenantData } = await supabase
-                    .from('tenants')
-                    .select('active')
-                    .eq('id', tenantId)
-                    .single();
-                
-                if (tenantData && tenantData.active === false) {
-                    setError(language === 'es' ? 'Sucursal suspendida por falta de pago. Contacte a soporte.' : 'Branch account suspended due to unpaid subscription. Contact support.');
-                    setPin('');
-                    setLoading(false);
-                    return;
+            let matchedUser: any = null;
+            let wentOffline = false;
+
+            try {
+                // Check if tenant is active (when online)
+                if (tenantId) {
+                    const { data: tenantData, error: tErr } = await supabase
+                        .from('tenants')
+                        .select('active')
+                        .eq('id', tenantId)
+                        .single();
+                    
+                    if (tErr && isNetworkError(tErr)) {
+                        wentOffline = true;
+                    } else if (tenantData && tenantData.active === false) {
+                        setError(language === 'es' ? 'Sucursal suspendida por falta de pago. Contacte a soporte.' : 'Branch account suspended due to unpaid subscription. Contact support.');
+                        setPin('');
+                        setLoading(false);
+                        return;
+                    }
+                }
+
+                if (!wentOffline) {
+                    const { data, error: dbErr } = await supabase
+                        .from('usuarios')
+                        .select('id, nombre, apellido, role, active, pin')
+                        .eq('pin', p)
+                        .single();
+
+                    if (dbErr && isNetworkError(dbErr)) {
+                        wentOffline = true;
+                    } else if (data) {
+                        matchedUser = data;
+                        // Keep local PIN cache fresh for offline mode
+                        const existingUsers = (await loadLocalCache<any[]>(tenantId, 'pos_users')) || [];
+                        const merged = [
+                            data,
+                            ...existingUsers.filter((u: any) => u.id !== data.id),
+                        ];
+                        await saveLocalCache(tenantId, 'pos_users', merged);
+                    }
+                }
+            } catch (netErr) {
+                if (isNetworkError(netErr)) {
+                    wentOffline = true;
+                } else {
+                    throw netErr;
                 }
             }
 
-            const { data, error: dbErr } = await supabase
-                .from('usuarios')
-                .select('id, nombre, apellido, role, active')
-                .eq('pin', p)
-                .single();
+            if (wentOffline) {
+                usePosStore.getState().setOnlineStatus(false);
+                const cachedUsers = await loadLocalCache<any[]>(tenantId, 'pos_users');
+                matchedUser = (cachedUsers || []).find((u: any) => String(u.pin) === String(p)) || null;
+            }
 
-            if (dbErr || !data) {
+            if (!matchedUser) {
                 setError(t('pos.login.invalid', language));
                 setPin('');
                 setLoading(false);
                 return;
             }
-            if (!data.active) {
+            if (!matchedUser.active) {
                 setError(t('pos.login.inactive', language));
                 setPin('');
                 setLoading(false);
                 return;
             }
 
-            if (data.role === 'cocinero') {
+            const fullName = `${matchedUser.nombre || ''} ${matchedUser.apellido || ''}`.trim() || matchedUser.full_name || 'Staff';
+
+            if (matchedUser.role === 'cocinero') {
                 setError(language === 'es' ? 'Acceso de Cocinero: Redirigiendo a Reloj de Personal' : 'Cook access: Redirecting to Time Clock');
-                setClockUser({ id: data.id, name: `${data.nombre} ${data.apellido}` });
+                setClockUser({ id: matchedUser.id, name: fullName });
                 setShowClockModal(true);
                 setPin('');
                 setLoading(false);
             } else if (timeClockMode) {
-                setClockUser({ id: data.id, name: `${data.nombre} ${data.apellido}` });
+                setClockUser({ id: matchedUser.id, name: fullName });
                 setShowClockModal(true);
                 setPin('');
                 setLoading(false);
             } else {
-                onLogin({ id: data.id, full_name: `${data.nombre} ${data.apellido}`, role: data.role });
+                onLogin({ id: matchedUser.id, full_name: fullName, role: matchedUser.role });
             }
         } catch {
             setError(t('pos.login.error', language));

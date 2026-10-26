@@ -5,6 +5,7 @@ import { usePosStore } from "../store/posStore";
 import { t } from '../utils/i18n';
 import type { FloorTable, Printer } from '../types';
 import TimeClockModal from "../components/TimeClockModal";
+import SyncStatusBar from "../components/SyncStatusBar";
 import { formatCurrency } from '../utils/currency';
 import { useSafePadding } from '../utils/safeArea';
 import Toast from 'react-native-toast-message';
@@ -99,11 +100,12 @@ export default function HomeScreen({ bgStr, tp, language, mapWidth, mapHeight }:
         
         {/* User + Header Bar */}
         <View style={{ width: '100%', maxWidth: 900, flexDirection: isLandscape ? 'row' : 'column', justifyContent: 'space-between', alignItems: isLandscape ? 'center' : 'stretch', gap: 12, marginBottom: 24 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <View>
               <Text style={{ fontSize: 18, fontWeight: '800', color: '#111827' }}>{currentPosUser.full_name}</Text>
               <Text style={{ fontSize: 12, color: '#6b7280', textTransform: 'capitalize' }}>{currentPosUser.role.replace('_', ' ')}</Text>
             </View>
+            <SyncStatusBar />
           </View>
 
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
