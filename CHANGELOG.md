@@ -2,6 +2,11 @@
 
 All notable changes to the Restaurant OS project will be documented in this file.
 
+## [2026-10-25] — v1.0.12
+### Added
+- Embedded active PowerSync instance URL (`https://6adec811b32a60a89a2ee637.powersync.journeyapps.com`) into EAS build configuration and runtime schema/connector fallbacks.
+- Deployed PowerSync Sync Streams (Edition 3) configuration for real-time POS data replication.
+
 ## [2026-10-25] — v1.0.11 (Phase 2)
 ### Added
 - **Built-in Offline-First Sync Engine (`pos-app`)**: Created [offlineSyncService.ts](file:///Users/abrahammartinez/.gemini/antigravity/scratch/restaurant-os/pos-app/src/services/offlineSyncService.ts) providing tenant-scoped `AsyncStorage` caching (`menu_catalog`, `settings_catalog`, `orders_list`, `active_cash_shift`, `pos_users`), client-side RFC4122 v4 UUID generation (`generateUUID()`), local sequential order numbers (`getNextLocalOrderNumber()`), and a persistent FIFO offline mutation queue (`enqueueOfflineMutation`, `flushOfflineQueue`) with automatic deduplication of intermediate cart edits.
