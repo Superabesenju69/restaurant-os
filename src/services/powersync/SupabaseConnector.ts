@@ -8,6 +8,7 @@
  * Activates automatically when `EXPO_PUBLIC_POWERSYNC_URL` is configured.
  */
 import { supabase } from '../../utils/supabase';
+import { DEFAULT_POWERSYNC_URL } from './AppSchema';
 
 export type PowerSyncUpdateType = 'PUT' | 'PATCH' | 'DELETE';
 
@@ -34,13 +35,15 @@ export class SupabaseConnector {
      * or falls back to the configured anon key for POS terminals using custom x-tenant-id headers.
      */
     async fetchCredentials() {
-        const endpoint = process.env.EXPO_PUBLIC_POWERSYNC_URL || '';
+        const endpoint = DEFAULT_POWERSYNC_URL;
         const {
             data: { session },
         } = await supabase.auth.getSession();
 
         const token =
-            session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+            session?.access_token ||
+            process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
+            'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5eHZtdGN2Z29kYmNsbndieWl3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI5MzMzNjcsImV4cCI6MjA4ODUwOTM2N30.QX6KpCli1HleQ-EILSPWmb69YKRBFFikWPAN3jV0MdI';
 
         if (!endpoint || !token) {
             return null;

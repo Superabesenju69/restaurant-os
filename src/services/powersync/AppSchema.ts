@@ -259,6 +259,10 @@ export const AppTables: Record<string, PowerSyncTableDefinition> = {
     },
 };
 
+export const DEFAULT_POWERSYNC_URL =
+    process.env.EXPO_PUBLIC_POWERSYNC_URL ||
+    'https://6adec811b32a60a89a2ee637.powersync.journeyapps.com';
+
 export function isPowerSyncConfigured(): boolean {
-    return Boolean(process.env.EXPO_PUBLIC_POWERSYNC_URL);
+    return Boolean(DEFAULT_POWERSYNC_URL);
 }
